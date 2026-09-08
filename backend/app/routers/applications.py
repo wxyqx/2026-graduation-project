@@ -24,11 +24,13 @@ def _get_or_404(db: Session, app_id: int) -> Application:
 
 @router.get("")
 def list_applications(
+
     stage: str | None = Query(default=None),
     status_: str | None = Query(default=None, alias="status"),
     pos_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
+    """投递列表：可按阶段 stage / 全局状态 status / 岗位 pos_id 筛选，含候选人姓名与岗位名。"""
     if stage is not None and stage not in sm.STAGES:
         raise HTTPException(status_code=400, detail="stage 不是合法阶段值")
     if status_ is not None and status_ not in sm.STATUSES:
@@ -45,6 +47,7 @@ def list_applications(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
+    """手动新建投递：初始阶段为 AI 筛选（ai）、状态进行中（pending）；重复投递返回 409。"""
     if db.get(Candidate, body.can_id) is None:
         raise HTTPException(status_code=404, detail="候选人不存在")
     if db.get(Position, body.pos_id) is None:
@@ -75,11 +78,13 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
 
 @router.get("/{app_id}")
 def get_application(app_id: int, db: Session = Depends(get_db)):
+    """投递详情：候选人 + 岗位信息 + 8 阶段时间线（各阶段结果与时间戳）。"""
     return application_detail(_get_or_404(db, app_id))
 
 
 @router.post("/{app_id}/advance")
 def advance(app_id: int, body: AdvanceIn, db: Session = Depends(get_db)):
+    """推进阶段：fromStage 必须等于当前阶段（409 防重复操作）；pass 推进、fail 淘汰终止；终面通过即已录用。"""
     a = _get_or_404(db, app_id)
     if body.from_stage not in sm.STAGES:
         raise HTTPException(status_code=400, detail="fromStage 不是合法阶段值")
@@ -103,6 +108,7 @@ def advance(app_id: int, body: AdvanceIn, db: Session = Depends(get_db)):
 
 @router.post("/{app_id}/revert")
 def revert(app_id: int, body: RevertIn, db: Session = Depends(get_db)):
+    """撤回：不传 toStage=撤销上一步决定（已淘汰/已录用则原地恢复进行中）；传 toStage=退回该阶段并清掉其后全部数据。"""
     a = _get_or_404(db, app_id)
     try:
         sm.revert(a, body.to_stage, datetime.now())

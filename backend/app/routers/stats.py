@@ -19,6 +19,7 @@ def _week_start(d: datetime) -> datetime:
 
 @router.get("/overview")
 def overview(db: Session = Depends(get_db)):
+    """统计总览：各状态/阶段计数、本月录用、本周进行、上周完成、按岗位分组（顶部状态栏与汇总页共用）。"""
     now = datetime.now()
     this_week = _week_start(now)
     last_week = this_week - timedelta(days=7)

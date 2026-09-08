@@ -19,6 +19,7 @@ async def intake(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """AI 智能录入：上传 PDF（files[]）或粘贴纯文本（texts[]）→ 提取文本 → AI 识别姓名、匹配岗位、评估通过与否并自动建档。逐条返回结果。PDF 与文本都不保存。"""
     if not files and not texts:
         raise HTTPException(status_code=400, detail="请至少上传一个 PDF 或粘贴一段简历文本")
     configs = db.scalars(

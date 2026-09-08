@@ -16,11 +16,13 @@ router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(
 
 @router.get("/fields")
 def export_fields():
+    """可导出字段清单（key + 中文名）。"""
     return [{"key": k, "label": v} for k, v in svc.EXPORT_FIELDS.items()]
 
 
 @router.post("")
 def export(body: ExportIn, db: Session = Depends(get_db)):
+    """导出投递记录：filters 选数据范围，fields 勾选字段（空=全部），format 为 xlsx 或 csv；返回文件流。"""
     fields = body.fields or list(svc.EXPORT_FIELDS)
     unknown = [k for k in fields if k not in svc.EXPORT_FIELDS]
     if unknown:

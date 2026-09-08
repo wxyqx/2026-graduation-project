@@ -34,6 +34,7 @@ def _get_or_404(db: Session, pos_id: int) -> Position:
 
 @router.get("", response_model=list[PositionOut])
 def list_positions(db: Session = Depends(get_db)):
+    """岗位列表（含每个岗位的投递数）。"""
     counts = _count_map(db)
     positions = db.scalars(select(Position).order_by(Position.id.desc())).all()
     return [_out(p, counts.get(p.id, 0)) for p in positions]
@@ -41,6 +42,7 @@ def list_positions(db: Session = Depends(get_db)):
 
 @router.post("", response_model=PositionOut, status_code=status.HTTP_201_CREATED)
 def create_position(body: PositionIn, db: Session = Depends(get_db)):
+    """新建岗位。岗位要求用于 AI 筛选匹配。"""
     p = Position(**body.model_dump())
     db.add(p)
     db.commit()
@@ -50,6 +52,7 @@ def create_position(body: PositionIn, db: Session = Depends(get_db)):
 
 @router.get("/{pos_id}", response_model=PositionOut)
 def get_position(pos_id: int, db: Session = Depends(get_db)):
+    """岗位详情。"""
     p = _get_or_404(db, pos_id)
     count = db.scalar(select(func.count()).select_from(Application).where(Application.pos_id == pos_id)) or 0
     return _out(p, count)
@@ -57,6 +60,7 @@ def get_position(pos_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{pos_id}", response_model=PositionOut)
 def update_position(pos_id: int, body: PositionUpdate, db: Session = Depends(get_db)):
+    """编辑岗位（只更新传入的字段）。"""
     p = _get_or_404(db, pos_id)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
@@ -68,6 +72,7 @@ def update_position(pos_id: int, body: PositionUpdate, db: Session = Depends(get
 
 @router.delete("/{pos_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_position(pos_id: int, db: Session = Depends(get_db)):
+    """删除岗位：已有投递记录时拒绝（409）。"""
     p = _get_or_404(db, pos_id)
     count = db.scalar(select(func.count()).select_from(Application).where(Application.pos_id == pos_id)) or 0
     if count:

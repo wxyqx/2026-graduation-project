@@ -19,6 +19,7 @@ def _user_out(user: User) -> UserOut:
 
 @router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterIn, db: Session = Depends(get_db)):
+    """注册：用户名重复返回 409；成功直接返回 token（自动登录）。"""
     exists = db.scalar(select(User).where(User.username == body.username))
     if exists:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="用户名已存在")
@@ -31,6 +32,7 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenOut)
 def login(body: LoginIn, db: Session = Depends(get_db)):
+    """登录：返回 JWT token（7 天有效）；用户名或密码错误返回 401。"""
     user = db.scalar(select(User).where(User.username == body.username))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
@@ -39,4 +41,5 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=UserOut)
 def me(current: User = Depends(get_current_user)):
+    """当前登录用户信息。"""
     return _user_out(current)
