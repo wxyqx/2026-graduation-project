@@ -1,0 +1,228 @@
+"""M2 后端全流程冒烟测试。用法：先起服务，再 `python scripts/smoke_test.py [base_url]`。
+
+测试完自动清理本次创建的数据（直连数据库删除，因为投递/候选人/用户没有删除接口）。
+"""
+import io
+import sys
+import time
+
+import fitz
+import httpx
+import pymysql
+from openpyxl import load_workbook
+
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8001"
+STAMP = str(int(time.time()))
+created = {"users": [], "positions": [], "candidates": [], "applications": [], "configs": []}
+passed = 0
+
+
+def check(cond, msg):
+    global passed
+    if not cond:
+        raise AssertionError(msg)
+    passed += 1
+    print(f"  ok  {msg}")
+
+
+def make_pdf(text: str) -> bytes:
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 72), text, fontsize=11, fontname="china-s")
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def run():
+    c = httpx.Client(base_url=BASE, timeout=30)
+
+    print("== health / auth")
+    check(c.get("/api/health").json()["database"] == "up", "health ok")
+    ua, pw = f"smoke_{STAMP}", "secret123"
+    r = c.post("/api/auth/register", json={"username": ua, "password": pw})
+    check(r.status_code == 201 and r.json()["token"], "register 201 + token")
+    created["users"].append(r.json()["user"]["id"])
+    check(c.post("/api/auth/register", json={"username": ua, "password": pw}).status_code == 409, "重名 409")
+    check(c.post("/api/auth/register", json={"username": "a", "password": pw}).status_code == 422, "用户名过短 422")
+    check(c.post("/api/auth/login", json={"username": ua, "password": "wrong"}).status_code == 401, "密码错误 401")
+    r = c.post("/api/auth/login", json={"username": ua, "password": pw})
+    check(r.status_code == 200, "login 200")
+    token = r.json()["token"]
+    H = {"Authorization": f"Bearer {token}"}
+    check(c.get("/api/auth/me", headers=H).json()["username"] == ua, "me 返回当前用户")
+    check(c.get("/api/auth/me").status_code == 401, "无 token 401")
+    check(c.get("/api/positions", headers={"Authorization": "Bearer bad.token"}).status_code == 401, "坏 token 401")
+    check(c.get("/api/applications").status_code == 401, "业务接口无 token 401")
+
+    print("== positions")
+    r = c.post("/api/positions", headers=H, json={"position_name": f"Java工程师_{STAMP}", "owner": "HR-A",
+                                                  "position_requirements": "3年以上Java，熟悉Spring Boot/MySQL"})
+    check(r.status_code == 201, "创建岗位 201")
+    p1 = r.json()["id"]; created["positions"].append(p1)
+    r = c.post("/api/positions", headers=H, json={"position_name": f"前端工程师_{STAMP}", "position_requirements": "Vue3"})
+    p2 = r.json()["id"]; created["positions"].append(p2)
+    check(c.post("/api/positions", headers=H, json={"owner": "x"}).status_code == 422, "岗位缺名称 422")
+    r = c.put(f"/api/positions/{p2}", headers=H, json={"owner": "HR-B"})
+    check(r.json()["owner"] == "HR-B" and r.json()["position_name"].startswith("前端"), "更新岗位仅改 owner")
+    check(any(p["id"] == p1 for p in c.get("/api/positions", headers=H).json()), "岗位列表包含新建")
+    check(c.get("/api/positions/999999", headers=H).status_code == 404, "岗位不存在 404")
+
+    print("== candidates")
+    r = c.post("/api/candidates", headers=H, json={"name": f"张三_{STAMP}", "remark": "内推"})
+    check(r.status_code == 201, "创建候选人 201")
+    c1 = r.json()["id"]; created["candidates"].append(c1)
+    r = c.post("/api/candidates", headers=H, json={"name": f"李四_{STAMP}"})
+    c2 = r.json()["id"]; created["candidates"].append(c2)
+    names = [x["name"] for x in c.get("/api/candidates", headers=H, params={"name": f"张三_{STAMP}"}).json()]
+    check(names == [f"张三_{STAMP}"], "姓名模糊查询")
+    check(c.put(f"/api/candidates/{c1}", headers=H, json={"remark": "改备注"}).json()["remark"] == "改备注", "更新备注")
+
+    print("== applications + 状态机")
+    r = c.post("/api/applications", headers=H, json={"can_id": c1, "pos_id": p1})
+    check(r.status_code == 201, "创建投递 201")
+    a1 = r.json()["id"]; created["applications"].append(a1)
+    d = r.json()
+    check(d["current_stage"] == "ai" and d["overall_status"] == "pending" and len(d["stages"]) == 8, "初始 ai/pending/8 阶段")
+    check(c.post("/api/applications", headers=H, json={"can_id": c1, "pos_id": p1}).status_code == 409, "重复投递 409")
+    check(c.post("/api/applications", headers=H, json={"can_id": 999999, "pos_id": p1}).status_code == 404, "候选人不存在 404")
+    r = c.post("/api/applications", headers=H, json={"can_id": c2, "pos_id": p2})
+    a2 = r.json()["id"]; created["applications"].append(a2)
+    lst = c.get("/api/applications", headers=H, params={"pos_id": p1}).json()
+    check([x["id"] for x in lst] == [a1] and lst[0]["candidate_name"] == f"张三_{STAMP}", "按岗位筛选 + 带候选人名")
+    check(c.get("/api/applications", headers=H, params={"stage": "xxx"}).status_code == 400, "非法 stage 400")
+    check(c.get("/api/applications", headers=H, params={"status": "pending"}).status_code == 200, "按状态筛选")
+
+    adv = lambda aid, fs, res: c.post(f"/api/applications/{aid}/advance", headers=H, json={"fromStage": fs, "result": res})
+    rev = lambda aid, to=None: c.post(f"/api/applications/{aid}/revert", headers=H, json={"toStage": to} if to else {})
+
+    check(adv(a1, "resume", "pass").status_code == 409, "fromStage 不匹配 409")
+    check(adv(a1, "ai", "maybe").status_code == 400, "result 非法 400")
+    check(rev(a1).status_code == 400, "ai 阶段 pending 不可撤回 400")
+    d = adv(a1, "ai", "pass").json()
+    check(d["current_stage"] == "resume" and d["ai_result"] == "pass", "ai pass → resume")
+    d = adv(a1, "resume", "pass").json()
+    st = {s["stage"]: s for s in d["stages"]}
+    check(d["current_stage"] == "contact" and st["resume"]["result"] == "pass" and st["resume"]["time"], "resume pass 写结果+时间 → contact")
+    d = adv(a1, "contact", "pass").json()
+    check(d["current_stage"] == "phone", "contact（无字段）pass → phone")
+    d = adv(a1, "phone", "fail").json()
+    st = {s["stage"]: s for s in d["stages"]}
+    check(d["overall_status"] == "fail" and d["current_stage"] == "phone" and st["phone"]["result"] == "fail", "phone fail → 已淘汰")
+    check(adv(a1, "phone", "pass").status_code == 409, "已淘汰不可再推进 409")
+    d = rev(a1).json()
+    st = {s["stage"]: s for s in d["stages"]}
+    check(d["overall_status"] == "pending" and d["current_stage"] == "phone" and st["phone"]["result"] is None, "淘汰撤回 → phone pending，结果清空")
+    d = rev(a1).json()
+    st = {s["stage"]: s for s in d["stages"]}
+    check(d["current_stage"] == "contact", "进行中撤回 → 退回 contact")
+    d = rev(a1).json()
+    st = {s["stage"]: s for s in d["stages"]}
+    check(d["current_stage"] == "resume" and st["resume"]["result"] is None and st["resume"]["time"] is None, "再撤回 → resume 且 resume 结果/时间清空")
+    d = adv(a1, "resume", "pass").json(); d = adv(a1, "contact", "pass").json(); d = adv(a1, "phone", "pass").json()
+    d = rev(a1, "ai").json()
+    st = {s["stage"]: s for s in d["stages"]}
+    check(d["current_stage"] == "ai" and all(s["result"] is None for s in d["stages"]) and d["ai_comment"] is None, "指定 toStage=ai 清空全部")
+    check(rev(a1, "final").status_code == 400, "toStage 晚于当前 400")
+    for fs in ["ai", "resume", "contact", "phone", "test", "pro", "hr"]:
+        d = adv(a1, fs, "pass").json()
+    check(d["current_stage"] == "final" and d["overall_status"] == "pending", "一路推进到 final")
+    d = adv(a1, "final", "pass").json()
+    check(d["overall_status"] == "pass" and d["current_stage"] == "final", "终面通过 → 已录用")
+    d = rev(a1).json()
+    st = {s["stage"]: s for s in d["stages"]}
+    check(d["overall_status"] == "pending" and d["current_stage"] == "final" and st["final"]["result"] is None, "录用撤回 → final pending")
+    d = adv(a1, "final", "pass").json()
+    detail = c.get(f"/api/applications/{a1}", headers=H).json()
+    check(detail["position"]["id"] == p1 and detail["candidate"]["id"] == c1, "详情含候选人+岗位")
+
+    print("== 岗位删除限制")
+    check(c.delete(f"/api/positions/{p1}", headers=H).status_code == 409, "有投递的岗位删除 409")
+    r = c.post("/api/positions", headers=H, json={"position_name": f"临时岗_{STAMP}"})
+    check(c.delete(f"/api/positions/{r.json()['id']}", headers=H).status_code == 204, "空岗位删除 204")
+
+    print("== ai-configs（用户隔离）")
+    check(c.post("/api/ai-screen/intake", headers=H, data={"texts": ["x" * 50]}).status_code == 400, "无启用配置 intake 400")
+    r = c.post("/api/ai-configs", headers=H, json={"name": "cfgA", "base_url": "http://127.0.0.1:9/v1", "api_key": "k", "model": "m"})
+    check(r.status_code == 201 and r.json()["is_enabled"] is False, "创建配置默认停用")
+    k1 = r.json()["id"]; created["configs"].append(k1)
+    r = c.post("/api/ai-configs", headers=H, json={"name": "cfgB", "base_url": "http://127.0.0.1:9/v1/", "api_key": "k", "model": "m", "is_enabled": True})
+    k2 = r.json()["id"]; created["configs"].append(k2)
+    check(c.put(f"/api/ai-configs/{k1}/enable", headers=H).json()["is_enabled"] is True, "enable")
+    check(c.put(f"/api/ai-configs/{k1}/disable", headers=H).json()["is_enabled"] is False, "disable")
+    check(c.put(f"/api/ai-configs/{k1}", headers=H, json={"model": "glm-4-flash"}).json()["model"] == "glm-4-flash", "更新 model")
+    check(len(c.get("/api/ai-configs", headers=H).json()) == 2, "列表 2 条")
+    ub = f"smoke_b_{STAMP}"
+    r = c.post("/api/auth/register", json={"username": ub, "password": pw}); created["users"].append(r.json()["user"]["id"])
+    HB = {"Authorization": f"Bearer {r.json()['token']}"}
+    check(c.get("/api/ai-configs", headers=HB).json() == [], "用户 B 看不到 A 的配置")
+    check(c.put(f"/api/ai-configs/{k1}", headers=HB, json={"model": "x"}).status_code == 404, "用户 B 改 A 的配置 404")
+    check(c.delete(f"/api/ai-configs/{k1}", headers=HB).status_code == 404, "用户 B 删 A 的配置 404")
+
+    print("== ai-screen intake（配置不可达，验证提取与错误路径）")
+    c.put(f"/api/ai-configs/{k1}/enable", headers=H)
+    good_pdf = make_pdf("姓名：王五\n应聘：Java工程师\n5年Java开发经验，精通Spring Boot、MySQL、Redis，主导过电商系统重构。")
+    blank_pdf = fitz.open(); blank_pdf.new_page(); blank = blank_pdf.tobytes(); blank_pdf.close()
+    before = len(c.get("/api/candidates", headers=H).json())
+    r = c.post("/api/ai-screen/intake", headers=H,
+               files=[("files", ("wangwu.pdf", good_pdf, "application/pdf")),
+                      ("files", ("scan.pdf", blank, "application/pdf")),
+                      ("files", ("note.txt", b"hello", "text/plain"))],
+               data={"texts": ["太短", "李四，8年前端经验，精通 Vue3 / TypeScript / Vite，负责过大型后台系统。" * 2]})
+    check(r.status_code == 200, "intake 200")
+    res = r.json()["results"]
+    check(r.json()["total"] == 5 and len(res) == 5, "5 条逐条返回")
+    check(res[0]["status"] == "error" and "AI 调用失败" in res[0]["message"], "有效 PDF → LLM 不可达 error（已重试）")
+    check(res[1]["status"] == "extract_failed" and "无法提取文本" in res[1]["message"], "空白 PDF → extract_failed（扫描件）")
+    check(res[2]["status"] == "extract_failed" and "仅支持 PDF" in res[2]["message"], "非 PDF → extract_failed")
+    check(res[3]["status"] == "extract_failed" and "过短" in res[3]["message"], "短文本 → extract_failed")
+    check(res[4]["status"] == "error", "有效文本 → LLM 不可达 error")
+    check(len(c.get("/api/candidates", headers=H).json()) == before, "失败条目不建档")
+    check(c.post("/api/ai-screen/intake", headers=H).status_code == 400, "空请求 400")
+
+    print("== stats / export")
+    s = c.get("/api/stats/overview", headers=H).json()
+    check(s["position_count"] >= 2 and s["pass_count"] >= 1 and s["pending_count"] >= 1, "统计计数")
+    check(len(s["stage_counts"]) == 8 and s["ai_pending_count"] >= 1, "8 阶段分布 + 待 AI 筛选数")
+    check(any(bp["pos_id"] == p1 and bp["pass"] == 1 for bp in s["by_position"]), "按岗位分组")
+    check(s["month_hired"] >= 1 and s["week_in_progress"] >= 1, "本月录用/本周进行")
+    fields = c.get("/api/export/fields", headers=H).json()
+    check(len(fields) == 21, "导出字段 21 个")
+    r = c.post("/api/export", headers=H, json={"filters": {"pos_id": p1}, "fields": ["id", "candidate_name", "position_name", "overall_status", "final_time"], "format": "xlsx"})
+    check(r.status_code == 200 and "spreadsheetml" in r.headers["content-type"] and r.headers["x-row-count"] == "1", "导出 xlsx 1 行")
+    ws = load_workbook(io.BytesIO(r.content)).active
+    rows = list(ws.iter_rows(values_only=True))
+    check(rows[0] == ("投递编号", "候选人姓名", "岗位名称", "全局状态", "终面时间") and rows[1][3] == "已录用", "xlsx 表头中文 + 状态中文")
+    r = c.post("/api/export", headers=H, json={"filters": {}, "format": "csv"})
+    check(r.status_code == 200 and r.content.startswith("\ufeff".encode("utf-8")) and r.content.decode("utf-8-sig").splitlines()[0].startswith("投递编号,候选人姓名"), "csv utf-8-sig 全字段")
+    check(c.post("/api/export", headers=H, json={"fields": ["hacker"]}).status_code == 400, "非法字段 400")
+    check(c.post("/api/export", headers=H, json={"filters": {"stage": "zzz"}}).status_code == 400, "非法 stage 400")
+
+    print(f"\n全部通过：{passed} 项断言")
+
+
+def cleanup():
+    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password="your-password", database="ats")
+    cur = conn.cursor()
+    def dele(table, ids):
+        if ids:
+            cur.execute(f"DELETE FROM `{table}` WHERE ID IN ({','.join(map(str, ids))})")
+    dele("Application", created["applications"])
+    if created["users"]:
+        cur.execute(f"DELETE FROM AI_API_Config WHERE User_ID IN ({','.join(map(str, created['users']))})")
+    dele("Candidate", created["candidates"])
+    dele("Position", created["positions"])
+    dele("User", created["users"])
+    conn.commit()
+    for t in ("Application", "Candidate", "Position", "AI_API_Config", "User"):
+        cur.execute(f"SELECT COUNT(*) FROM `{t}`")
+        print(f"  cleanup {t}: {cur.fetchone()[0]} rows left")
+    conn.close()
+
+
+if __name__ == "__main__":
+    try:
+        run()
+    finally:
+        print("== cleanup")
+        cleanup()

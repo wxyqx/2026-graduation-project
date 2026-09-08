@@ -4,6 +4,8 @@ from pathlib import Path
 
 class Settings(BaseSettings):
     database_url: str = "mysql+pymysql://root@127.0.0.1:3306/ats?charset=utf8mb4"
+    secret_key: str = "change-me-to-a-random-hex-string"
+    token_expire_days: int = 7
 
     model_config = {
         "env_file": Path(__file__).resolve().parents[2] / ".env",
