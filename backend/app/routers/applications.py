@@ -9,8 +9,9 @@
 推进、撤回的具体规则不在这里，在 services/state_machine.py。这里只做检查和调用。
 """
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -24,6 +25,8 @@ from app.services.views import application_detail, application_summary
 
 router = APIRouter(prefix="/api/applications", tags=["applications"], dependencies=[Depends(get_current_user)])
 
+AppId = Annotated[int, Path(description="投递记录编号（列表里每一行的 id）")]
+
 
 def _get_or_404(db: Session, app_id: int) -> Application:
     a = db.get(Application, app_id)
@@ -34,12 +37,41 @@ def _get_or_404(db: Session, app_id: int) -> Application:
 
 @router.get("")
 def list_applications(
-    stage: str | None = Query(default=None),
-    status_: str | None = Query(default=None, alias="status"),  # 网址里叫 status，但 status 这个名字已经被上面 import 的模块占了，所以 Python 里叫 status_
-    pos_id: int | None = Query(default=None),
+    stage: str | None = Query(
+        default=None,
+        description="只看当前在这一关的：ai=AI筛选 / resume=简历筛选 / contact=联系候选人 / phone=电话沟通 / test=笔试 / pro=专业面 / hr=HR面 / final=终面",
+    ),
+    status_: str | None = Query(
+        default=None, alias="status", description="只看这个状态的：pending=进行中 / pass=已录用 / fail=已淘汰"
+    ),  # 网址里叫 status，但 status 这个名字已经被上面 import 的模块占了，所以 Python 里叫 status_
+    pos_id: int | None = Query(default=None, description="只看这个岗位的（岗位编号）"),
     db: Session = Depends(get_db),
 ):
-    """投递列表：可按阶段 stage / 全局状态 status / 岗位 pos_id 筛选，含候选人姓名与岗位名。"""
+    """投递列表（可按关卡 / 状态 / 岗位筛选）
+
+**干什么用**：前端「投递列表」页的表格。三个筛选条件都可不填，填了就是「且」的关系（同时满足）。
+
+**举例**：
+- 什么都不填 → 全部投递
+- `status=pending` → 所有还在进行中的
+- `stage=ai&status=pending` → 卡在第一关等 AI 筛选的
+- `pos_id=1` → 投了 1 号岗位的所有人
+
+**返回什么**：数组，每条是精简信息（详情要另外调 GET /{id}）：
+```json
+[{
+  "id": 7, "can_id": 3, "pos_id": 1,
+  "candidate_name": "张三", "position_name": "Java高级工程师",
+  "current_stage": "phone", "current_stage_label": "电话沟通",
+  "overall_status": "pending",
+  "ai_result": "pass", "ai_comment": "5年Java经验，符合要求",
+  "create_time": "...", "update_time": "..."
+}]
+```
+
+**可能出错**：
+- 400：`stage` 或 `status` 传了不在可选值里的东西
+"""
     # 先把乱传的值挡在门外（枚举值以数据字典为准）
     if stage is not None and stage not in sm.STAGES:
         raise HTTPException(status_code=400, detail="stage 不是合法阶段值")
@@ -58,7 +90,20 @@ def list_applications(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
-    """手动新建投递：初始阶段为 AI 筛选（ai）、状态进行中（pending）；重复投递返回 409。"""
+    """手动新建一条投递（某人投了某岗位）
+
+**干什么用**：不走 AI 录入、手动把「张三投了 Java 岗」记进系统。新投递永远从第一关 `ai` 开始、状态 `pending`。
+
+**怎么填**：`can_id` 候选人编号 + `pos_id` 岗位编号，两个都得先存在。
+
+**返回什么**：完整详情（和 GET /{id} 一样，含 8 关时间线）。
+
+**可能出错**：
+- 404：候选人或岗位编号不存在
+- 409：这个人已经投过这个岗位了（同一人同一岗只能一条）
+
+**小知识**：手动建的投递第一关 `ai` 也可以人工打分——调 advance 传 `{"fromStage": "ai", "result": "pass"}` 就跳过 AI 直接进第二关。
+"""
     # 先确认「人」和「岗位」都真实存在
     if db.get(Candidate, body.can_id) is None:
         raise HTTPException(status_code=404, detail="候选人不存在")
@@ -91,14 +136,59 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{app_id}")
-def get_application(app_id: int, db: Session = Depends(get_db)):
-    """投递详情：候选人 + 岗位信息 + 8 阶段时间线（各阶段结果与时间戳）。"""
+def get_application(app_id: AppId, db: Session = Depends(get_db)):
+    """投递详情（候选人 + 岗位 + 8 关时间线）
+
+**干什么用**：前端「投递详情」页。能看到这个人每一关的成绩和时间，以及 AI 给的理由。
+
+**返回什么**（比列表多了 `candidate`、`position`、`stages` 三块）：
+```json
+{
+  "id": 7, "current_stage": "phone", "overall_status": "pending",
+  "ai_result": "pass", "ai_comment": "5年Java经验，符合要求",
+  "candidate": {"id": 3, "name": "张三", "remark": "AI录入", "create_time": "..."},
+  "position": {"id": 1, "position_name": "Java高级工程师", "owner": "王HR", "position_requirements": "..."},
+  "stages": [
+    {"stage": "ai",      "label": "AI筛选",   "result": "pass", "time": null,  "is_current": false},
+    {"stage": "resume",  "label": "简历筛选", "result": "pass", "time": "...", "is_current": false},
+    {"stage": "contact", "label": "联系候选人", "result": null, "time": null,  "is_current": false},
+    {"stage": "phone",   "label": "电话沟通", "result": null,   "time": null,  "is_current": true},
+    "……后面 4 关 result 和 time 都是 null，还没走到"
+  ]
+}
+```
+`stages` 里 `is_current: true` 的那一关就是现在卡的位置。`contact` 这关表里没有格子，永远是 null，只是个流程节点。
+
+**可能出错**：
+- 404：没有这个编号
+"""
     return application_detail(_get_or_404(db, app_id))
 
 
 @router.post("/{app_id}/advance")
-def advance(app_id: int, body: AdvanceIn, db: Session = Depends(get_db)):
-    """推进阶段：fromStage 必须等于当前阶段（409 防重复操作）；pass 推进、fail 淘汰终止；终面通过即已录用。"""
+def advance(app_id: AppId, body: AdvanceIn, db: Session = Depends(get_db)):
+    """推进一关：给当前关打分（通过 / 淘汰）
+
+**干什么用**：前端行内的「通过」「淘汰」按钮点的就是它。
+
+**怎么填**：
+- `fromStage`：你以为现在在哪一关。**必须和详情里的 `current_stage` 一样**——防止手快点两次：第一次点完阶段已经变了，第二次 fromStage 对不上就被拒绝。
+- `result`：`pass` 通过 / `fail` 淘汰
+
+**打完分会怎样**：
+- `pass` 且不是最后一关 → 记下这关成绩和时间，`current_stage` 变成下一关
+- `pass` 且是 `final` → `overall_status` 变 `pass`（**已录用**）
+- `fail` → 记下成绩，`overall_status` 变 `fail`（**已淘汰**），停在这一关
+
+**返回什么**：打完分后的完整详情。
+
+**可能出错**：
+- 400：`fromStage` 不是 8 关之一，或 `result` 不是 pass/fail
+- 409：`fromStage` 和当前阶段不一致（刷新一下再看）；或这条投递已经结束了（要先撤回）
+- 404：没有这个投递
+
+**试一试**：新建一条投递，然后依次传 `ai→resume→contact→phone→test→pro→hr→final` 各 pass 一次，最后看 `overall_status` 变成 pass。
+"""
     a = _get_or_404(db, app_id)
     # 四道检查，一道不过就拒绝
     if body.from_stage not in sm.STAGES:
@@ -123,8 +213,28 @@ def advance(app_id: int, body: AdvanceIn, db: Session = Depends(get_db)):
 
 
 @router.post("/{app_id}/revert")
-def revert(app_id: int, body: RevertIn, db: Session = Depends(get_db)):
-    """撤回：不传 toStage=撤销上一步决定（已淘汰/已录用则原地恢复进行中）；传 toStage=退回该阶段并清掉其后全部数据。"""
+def revert(app_id: AppId, body: RevertIn, db: Session = Depends(get_db)):
+    """撤回：反悔上一步，或退回到指定关卡
+
+**干什么用**：打错分了、或者想重新面试某一关。前端行内的「撤回」按钮。
+
+**两种用法**：
+
+1. **不传 `toStage`（传 `{}`）= 撤销上一步**
+   - 已淘汰 / 已录用的：清掉当前关的成绩，停在原关，状态回到进行中。例：phone 关打了 fail → 撤回 → phone 关重新等打分
+   - 进行中的：退回上一关并清掉上一关的成绩。例：现在在 test 关（说明 phone 打了 pass）→ 撤回 → 回到 phone 关重打
+   - 已经在第一关 `ai` 且没打分 → 没有可撤的，回 400
+
+2. **传 `toStage`（如 `{"toStage": "resume"}`）= 退回到那一关重来**
+   - 从 `toStage` 到当前关的所有成绩全部清空，`current_stage` 变成 `toStage`，状态回到进行中
+   - `toStage` 不能比现在还靠后
+
+**返回什么**：撤回后的完整详情。
+
+**可能出错**：
+- 400：第一关无法再撤 / `toStage` 不合法 / `toStage` 晚于当前关
+- 404：没有这个投递
+"""
     a = _get_or_404(db, app_id)
     try:
         sm.revert(a, body.to_stage, datetime.now())

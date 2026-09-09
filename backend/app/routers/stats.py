@@ -30,7 +30,37 @@ def _week_start(d: datetime) -> datetime:
 
 @router.get("/overview")
 def overview(db: Session = Depends(get_db)):
-    """统计总览：各状态/阶段计数、本月录用、本周进行、上周完成、按岗位分组（顶部状态栏与汇总页共用）。"""
+    """统计总览：一次拿到所有数字
+
+**干什么用**：页面顶部状态栏和「汇总导出」页的统计卡都用它，一次请求全拿到。
+
+**怎么填**：不用填。
+
+**返回什么**：
+```json
+{
+  "position_count": 3,          // 在招岗位数
+  "application_total": 12,      // 投递总数
+  "pending_count": 7,           // 进行中
+  "pass_count": 2,              // 已录用
+  "fail_count": 3,              // 已淘汰
+  "ai_pending_count": 4,        // 卡在第一关等 AI 筛的（顶部「待 AI 筛选」）
+  "week_in_progress": 5,        // 本周新建且还在进行中的
+  "last_week_completed": 3,     // 上周结束的（录用 + 淘汰）
+  "month_hired": 2,             // 本月录用
+  "stage_counts": [             // 进行中的投递，每一关各有几个人（固定 8 项，顺序固定）
+    {"stage": "ai", "label": "AI筛选", "count": 4},
+    {"stage": "resume", "label": "简历筛选", "count": 2},
+    "……"
+  ],
+  "by_position": [              // 每个岗位下各状态几条（没投递的岗位也在，全是 0）
+    {"pos_id": 1, "position_name": "Java高级工程师", "total": 8, "pending": 5, "pass": 1, "fail": 2}
+  ]
+}
+```
+
+**时间口径**：「周」从周一 0 点算；「本月」从 1 号 0 点算；「完成 / 录用」看的是投递的最后更新时间。
+"""
     # ---- 先算几个时间点 ----
     now = datetime.now()
     this_week = _week_start(now)  # 本周一 0 点

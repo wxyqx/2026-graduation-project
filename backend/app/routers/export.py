@@ -24,13 +24,52 @@ router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(
 
 @router.get("/fields")
 def export_fields():
-    """可导出字段清单（key + 中文名）。"""
+    """可导出的列有哪些（给勾选框用）
+
+**干什么用**：前端「汇总导出」页的字段勾选框，就是从这里拿列表。导出时把勾中的 `key` 放进 `fields`。
+
+**返回什么**：21 列，顺序就是导出时的列顺序：
+```json
+[
+  {"key": "id", "label": "投递编号"},
+  {"key": "candidate_name", "label": "候选人姓名"},
+  {"key": "position_name", "label": "岗位名称"},
+  {"key": "current_stage", "label": "当前阶段"},
+  {"key": "overall_status", "label": "全局状态"},
+  {"key": "ai_result", "label": "AI筛选结果"},
+  {"key": "ai_comment", "label": "AI筛选理由"},
+  "……8 关的时间和结果……",
+  {"key": "create_time", "label": "投递创建时间"},
+  {"key": "update_time", "label": "更新时间"}
+]
+```
+"""
     return [{"key": k, "label": v} for k, v in svc.EXPORT_FIELDS.items()]
 
 
 @router.post("")
 def export(body: ExportIn, db: Session = Depends(get_db)):
-    """导出投递记录：filters 选数据范围，fields 勾选字段（空=全部），format 为 xlsx 或 csv；返回文件流。"""
+    """导出投递记录为 Excel / csv 文件
+
+**干什么用**：把系统里的投递记录导成表格，发给领导、存档、或用 Excel 做进一步分析。
+
+**怎么填**：
+- `filters`：筛选条件，都可不填。时间段按投递创建时间算，`start_date` 和 `end_date` 都包含当天
+- `fields`：想要哪些列（`key` 见上面 /fields 接口），空 = 全部 21 列
+- `format`：`xlsx`（Excel）或 `csv`
+
+**返回什么**：不是 JSON，是**文件本身**。在 /docs 网页上点 Execute 后，Response body 会出现一个 **Download file** 链接，点它下载。
+表头是中文，`pass/fail/pending` 这类值也翻成了中文（通过 / 淘汰 / 进行中……）。
+
+回应头里有两个额外信息：
+- `Content-Disposition`：文件名，形如 `投递记录_20260908_143000.xlsx`
+- `X-Row-Count`：导出了几行
+
+**可能出错**：
+- 400：`fields` 里有不认识的列名 / `stage` `status` 不合法 / `format` 不是 xlsx 或 csv
+
+**小知识**：csv 用的是 utf-8-sig 编码（开头带一个隐形标记），这样用 Excel 直接打开中文不会乱码。
+"""
     # ---- 检查参数 ----
     fields = body.fields or list(svc.EXPORT_FIELDS)  # 没勾选 = 全部列
     unknown = [k for k in fields if k not in svc.EXPORT_FIELDS]  # 有没有乱传的列名
