@@ -25,6 +25,7 @@ export const candidateApi = {
   list: (name) => http.get('/candidates', { params: name ? { name } : {} }),
   create: (data) => http.post('/candidates', data),
   update: (id, data) => http.put(`/candidates/${id}`, data),
+  remove: (id) => http.delete(`/candidates/${id}`), // 级联删除：连带删掉他名下的投递
 }
 
 // ---- 投递 ----

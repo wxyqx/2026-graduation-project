@@ -22,6 +22,7 @@ const routes = [
     redirect: '/positions',
     children: [
       { path: 'positions', name: 'positions', component: () => import('../views/PositionsView.vue'), meta: { title: '岗位管理' } },
+      { path: 'candidates', name: 'candidates', component: () => import('../views/CandidatesView.vue'), meta: { title: '候选人管理' } },
       { path: 'applications', name: 'applications', component: () => import('../views/ApplicationsView.vue'), meta: { title: '投递列表' } },
       { path: 'applications/:id', name: 'application-detail', component: () => import('../views/ApplicationDetailView.vue'), meta: { title: '投递详情' } },
       { path: 'stats', name: 'stats', component: () => import('../views/StatsView.vue'), meta: { title: '汇总导出' } },

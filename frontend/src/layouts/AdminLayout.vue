@@ -60,6 +60,10 @@ function logout() {
           <el-icon><Briefcase /></el-icon>
           <span>岗位管理</span>
         </el-menu-item>
+        <el-menu-item index="/candidates">
+          <el-icon><User /></el-icon>
+          <span>候选人管理</span>
+        </el-menu-item>
         <el-menu-item index="/applications">
           <el-icon><Tickets /></el-icon>
           <span>投递列表</span>

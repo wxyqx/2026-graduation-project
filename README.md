@@ -63,6 +63,7 @@ backend/app/
 - 枚举值照数据字典；`contact` 阶段在表里没有结果/时间字段，只作为流程节点
 - 撤回：已淘汰/已录用 → 清当前阶段结果、原地恢复进行中；进行中 → 退回上一阶段并清上一阶段结果；指定 `toStage` → 清该阶段及之后全部数据
 - AI 录入不保存 PDF 与简历文本，只写 `ai_result` / `ai_comment`；同名视为同一候选人
+- 删除候选人 = 级联删除其名下投递（应用层实现）；岗位有投递时仍拒删（外键 restrict）
 
 ## 前端结构
 
@@ -75,7 +76,7 @@ frontend/src/
   stores/auth.js 登录状态（token + 用户），localStorage 持久化
   router/index.js 路由 + 守卫：未登录访问后台 → /login
   layouts/AdminLayout.vue 后台布局：左菜单 + 顶栏（5 个速览数字 + 主题切换）
-  views/         登录 / 注册 / 岗位管理 / 投递列表 / 投递详情 /（汇总导出、设置 M4）
+  views/         登录 / 注册 / 岗位管理 / 候选人管理 / 投递列表 / 投递详情 /（汇总导出、设置 M4）
   theme.js + styles/theme.css  三档主题：白天 / 黑夜(Element dark) / 护眼(米黄)，localStorage 保持
   constants.js   8 阶段 / 状态 / 结果的中文名单（照后端数据字典）
 ```

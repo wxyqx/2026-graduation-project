@@ -28,3 +28,4 @@ class CandidateOut(BaseModel):
     name: str | None = Field(description="姓名")
     remark: str | None = Field(description="备注")
     create_time: datetime | None = Field(description="录入时间")
+    application_count: int = Field(default=0, description="这名候选人名下有几条投递（删除前会连带删除这些）")
