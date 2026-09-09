@@ -1,3 +1,12 @@
+"""
+【候选人接口】
+  GET  /api/candidates?name=张   列表，可按姓名模糊搜
+  POST /api/candidates           新建
+  GET  /api/candidates/{id}      详情
+  PUT  /api/candidates/{id}      改备注
+
+没有删除接口：候选人一旦有投递记录就不该删；设计文档也没要求。
+"""
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,9 +28,10 @@ def _out(c: Candidate) -> CandidateOut:
 @router.get("", response_model=list[CandidateOut])
 def list_candidates(name: str | None = Query(default=None), db: Session = Depends(get_db)):
     """候选人列表：name 参数可做姓名模糊查询。"""
+    # Query(default=None)：这个参数写在网址问号后面（?name=张），不传也行
     stmt = select(Candidate).order_by(Candidate.id.desc())
     if name:
-        stmt = stmt.where(Candidate.name.like(f"%{name}%"))
+        stmt = stmt.where(Candidate.name.like(f"%{name}%"))  # % 是通配符：「张」能搜到「张三」「小张」
     return [_out(c) for c in db.scalars(stmt).all()]
 
 
@@ -50,6 +60,7 @@ def update_candidate(can_id: int, body: CandidateUpdate, db: Session = Depends(g
     c = db.get(Candidate, can_id)
     if c is None:
         raise HTTPException(status_code=404, detail="候选人不存在")
+    # model_fields_set = 前端真正传了的字段集合。这样能区分「没传 remark」和「传了 remark 但值是空（想清空）」
     if "remark" in body.model_fields_set:
         c.remark = body.remark
     db.commit()

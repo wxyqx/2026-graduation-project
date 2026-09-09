@@ -1,5 +1,13 @@
-"""M2 后端全流程冒烟测试。用法：先起服务，再 `python scripts/smoke_test.py [base_url]`。
+"""
+【这个文件是干什么的？】——后端的「体检单」
+写好代码后怎么知道它真的能用？一个个手点太累，所以写一个脚本自动跑一遍：
+注册 → 登录 → 建岗位 → 建候选人 → 建投递 → 一关关推进、撤回 → AI 配置 → 导出……
+每一步都「断言」（assert）结果必须是我们预期的，不对就立刻报错停下。
 
+这种「把主要功能快速跑一遍」的测试叫「冒烟测试」（比喻：机器一开机先看冒不冒烟）。
+以后改了代码，跑一遍这个脚本，72 项全绿就说明没改坏。
+
+用法：先起服务，再 `python scripts/smoke_test.py [服务地址]`，默认 http://127.0.0.1:8001。
 测试完自动清理本次创建的数据（直连数据库删除，因为投递/候选人/用户没有删除接口）。
 """
 import io
@@ -11,13 +19,14 @@ import httpx
 import pymysql
 from openpyxl import load_workbook
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8001"
-STAMP = str(int(time.time()))
-created = {"users": [], "positions": [], "candidates": [], "applications": [], "configs": []}
-passed = 0
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8001"  # 服务地址，可以从命令行传
+STAMP = str(int(time.time()))  # 当前时间戳，拼进用户名/岗位名，保证每次跑都不重名
+created = {"users": [], "positions": [], "candidates": [], "applications": [], "configs": []}  # 记下建了什么，最后好删
+passed = 0  # 通过了几项
 
 
 def check(cond, msg):
+    """检查一件事：cond 为真就打一行 ok，为假就报错停下。整个脚本就是几十个 check 串起来。"""
     global passed
     if not cond:
         raise AssertionError(msg)
@@ -26,6 +35,7 @@ def check(cond, msg):
 
 
 def make_pdf(text: str) -> bytes:
+    """用 PyMuPDF 在内存里造一个带文字的小 PDF，模拟用户上传的简历。fontname="china-s" 是内置的中文字体。"""
     doc = fitz.open()
     page = doc.new_page()
     page.insert_text((50, 72), text, fontsize=11, fontname="china-s")
@@ -35,7 +45,7 @@ def make_pdf(text: str) -> bytes:
 
 
 def run():
-    c = httpx.Client(base_url=BASE, timeout=30)
+    c = httpx.Client(base_url=BASE, timeout=30)  # httpx 是发网络请求的工具，像一个程序版的浏览器
 
     print("== health / auth")
     check(c.get("/api/health").json()["database"] == "up", "health ok")
@@ -49,7 +59,7 @@ def run():
     r = c.post("/api/auth/login", json={"username": ua, "password": pw})
     check(r.status_code == 200, "login 200")
     token = r.json()["token"]
-    H = {"Authorization": f"Bearer {token}"}
+    H = {"Authorization": f"Bearer {token}"}  # 以后每个请求都带这个「通行证」请求头，模拟已登录
     check(c.get("/api/auth/me", headers=H).json()["username"] == ua, "me 返回当前用户")
     check(c.get("/api/auth/me").status_code == 401, "无 token 401")
     check(c.get("/api/positions", headers={"Authorization": "Bearer bad.token"}).status_code == 401, "坏 token 401")
@@ -93,6 +103,7 @@ def run():
     check(c.get("/api/applications", headers=H, params={"stage": "xxx"}).status_code == 400, "非法 stage 400")
     check(c.get("/api/applications", headers=H, params={"status": "pending"}).status_code == 200, "按状态筛选")
 
+    # 两个小快捷函数：adv = 推进某一关，rev = 撤回。lambda 是「一行写完的小函数」
     adv = lambda aid, fs, res: c.post(f"/api/applications/{aid}/advance", headers=H, json={"fromStage": fs, "result": res})
     rev = lambda aid, to=None: c.post(f"/api/applications/{aid}/revert", headers=H, json={"toStage": to} if to else {})
 
@@ -202,6 +213,7 @@ def run():
 
 
 def cleanup():
+    """把这次测试建的数据全删掉，让数据库恢复干净。删除顺序有讲究：先删「引用别人的」（投递），再删「被引用的」（候选人、岗位）。"""
     conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password="your-password", database="ats")
     cur = conn.cursor()
     def dele(table, ids):
@@ -221,6 +233,7 @@ def cleanup():
 
 
 if __name__ == "__main__":
+    # try/finally：不管测试中途成功还是失败，finally 里的清理都一定会执行，不留垃圾数据
     try:
         run()
     finally:

@@ -1,3 +1,15 @@
+"""
+【AI 接口配置：增删改查 + 启用/停用】
+  GET    /api/ai-configs               我的配置列表
+  POST   /api/ai-configs               新建
+  PUT    /api/ai-configs/{id}          编辑
+  DELETE /api/ai-configs/{id}          删除
+  PUT    /api/ai-configs/{id}/enable   启用
+  PUT    /api/ai-configs/{id}/disable  停用
+
+重点：每个人只能看到、改动「自己」添加的配置。所有查询都带上 user_id == 当前用户 这个条件，
+别人的配置对你来说就像不存在（回 404 而不是 403，连「有这么一条」都不告诉你）。
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -7,16 +19,19 @@ from app.core.deps import get_current_user
 from app.models import AiApiConfig, User
 from app.schemas.ai_config import AiConfigIn, AiConfigOut, AiConfigUpdate
 
+# 这里没在 router 上统一挂门卫，因为每个函数都要拿到 user 本人（要用 user.id 过滤），所以各自写 Depends
 router = APIRouter(prefix="/api/ai-configs", tags=["ai-configs"])
 
 
 def _out(c: AiApiConfig) -> AiConfigOut:
+    # 数据库存 1/0，回给前端变成 True/False
     return AiConfigOut(
         id=c.id, name=c.name, base_url=c.base_url, api_key=c.api_key, model=c.model, is_enabled=bool(c.is_enabled)
     )
 
 
 def _get_own_or_404(db: Session, cfg_id: int, user: User) -> AiApiConfig:
+    """按编号找配置，而且必须是「我的」。不是我的或不存在，一律 404。"""
     c = db.scalar(select(AiApiConfig).where(AiApiConfig.id == cfg_id, AiApiConfig.user_id == user.id))
     if c is None:
         raise HTTPException(status_code=404, detail="AI 配置不存在")
@@ -35,11 +50,11 @@ def create_config(body: AiConfigIn, db: Session = Depends(get_db), user: User = 
     """新建 AI 配置（OpenAI 兼容接口：GLM / Qwen / DeepSeek 等）。"""
     c = AiApiConfig(
         name=body.name,
-        base_url=body.base_url.strip(),
+        base_url=body.base_url.strip(),  # strip 去掉用户复制粘贴时多带的空格
         api_key=body.api_key.strip(),
         model=body.model.strip(),
-        is_enabled=1 if body.is_enabled else 0,
-        user_id=user.id,
+        is_enabled=1 if body.is_enabled else 0,  # True/False → 1/0
+        user_id=user.id,  # 记下是谁建的
     )
     db.add(c)
     db.commit()
@@ -53,11 +68,11 @@ def update_config(
 ):
     """编辑 AI 配置（只更新传入的字段）。"""
     c = _get_own_or_404(db, cfg_id, user)
-    data = body.model_dump(exclude_unset=True)
+    data = body.model_dump(exclude_unset=True)  # 只取前端真正传了的字段
     if "is_enabled" in data:
         data["is_enabled"] = 1 if data["is_enabled"] else 0
     for k, v in data.items():
-        setattr(c, k, v.strip() if isinstance(v, str) else v)
+        setattr(c, k, v.strip() if isinstance(v, str) else v)  # 文字类的字段顺手去空格
     db.commit()
     db.refresh(c)
     return _out(c)

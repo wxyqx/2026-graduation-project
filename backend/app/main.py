@@ -1,3 +1,17 @@
+"""
+【这个文件是干什么的？】——整个后端的「总开关」
+运行命令 uvicorn app.main:app 时，就是从这里启动的。
+
+它做的事很简单：
+  1. 造一个 FastAPI 应用（app），写上名字和说明
+  2. 允许前端网页（跑在 5173 端口）来访问（CORS）
+  3. 把 routers/ 里 8 组接口全部挂上去
+  4. 再加两个自己的小接口：首页说明、健康检查
+
+自己不干业务活，只负责「把大家组装起来」。
+"""
+import inspect
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -6,6 +20,7 @@ from sqlalchemy import text
 from app.core.database import engine
 from app.routers import ai_configs, ai_screen, applications, auth, candidates, export, positions, stats
 
+# /docs 文档页上每个分组的中文说明
 TAGS = [
     {"name": "auth", "description": "认证：注册 / 登录 / 当前用户"},
     {"name": "positions", "description": "岗位管理"},
@@ -28,21 +43,23 @@ app = FastAPI(
     openapi_tags=TAGS,
 )
 
+# CORS（跨域）：浏览器有个安全规矩——网页在 5173 端口，默认不许它去请求 8000 端口的接口。
+# 这里明确告诉浏览器：这两个地址来的请求我认，放行。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],  # 只放行本机前端开发服务器
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition", "X-Row-Count"],
+    allow_methods=["*"],  # GET / POST / PUT / DELETE 都行
+    allow_headers=["*"],  # 请求头随便带（Authorization 就在里面）
+    expose_headers=["Content-Disposition", "X-Row-Count"],  # 允许前端读到这两个回应头（下载文件名、导出行数）
 )
 
+# 把 8 组接口全部挂上。每个 routers/xxx.py 里都有一个 router 变量
 for r in (auth, positions, candidates, applications, ai_configs, ai_screen, stats, export):
     app.include_router(r.router)
 
 # 把各接口的中文 docstring 提升为 /docs 里的摘要与描述
-import inspect
-
+# （FastAPI 默认不会用函数第一行的文字做「标题」，这里手动补一下，/docs 才能一眼看到中文）
 for route in app.routes:
     if not getattr(route, "include_in_schema", False) or getattr(route, "summary", None):
         continue
@@ -52,8 +69,9 @@ for route in app.routes:
         route.description = doc.strip()
 
 
-@app.get("/", include_in_schema=False)
+@app.get("/", include_in_schema=False)  # include_in_schema=False：这个页面不出现在 /docs 里
 def home():
+    """首页：一段中文说明，告诉打开的人「这是后端，不是系统界面」。"""
     return HTMLResponse(
         """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>ATS 招聘管理系统</title>
@@ -75,9 +93,10 @@ a{color:#409eff}code{background:#f4f4f5;padding:2px 6px;border-radius:4px}</styl
 
 @app.get("/api/health")
 def health():
+    """健康检查：前端启动时先问一声「后端活着吗？数据库通吗？」。不需要登录。"""
     try:
         with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+            conn.execute(text("SELECT 1"))  # 最简单的 SQL，能跑通就说明数据库连着
         return {"status": "ok", "database": "up"}
     except Exception:
-        return JSONResponse(status_code=503, content={"status": "error", "database": "down"})
+        return JSONResponse(status_code=503, content={"status": "error", "database": "down"})  # 503 = 服务暂时不可用

@@ -1,4 +1,14 @@
-"""用本地 mock LLM 服务验证 intake 成功路径：建档、自动推进、重复、未匹配、坏配置换配置重试。"""
+"""
+【这个文件是干什么的？】——用「假 AI」测试 AI 录入的成功路径
+真正的 AI 要钱、要网、回答还不固定，没法用来做自动测试。
+所以这里在本机 8009 端口起一个「假 AI 服务」（MockLLM）：它假装自己是大模型，
+收到简历后按固定规则回答——简历里有 NOPOS 就说「没匹配的岗位」，有 FAILME 就说「不合格」，否则「合格」。
+
+这样就能稳定地验证：识别姓名、匹配岗位、pass 自动推进、fail 标记淘汰、未匹配不建档、
+重复不建档，以及「第一个 AI 配置坏了会自动换第二个」这个重试逻辑。
+
+用法同 smoke_test.py。跑完自动清理。
+"""
 import json
 import re
 import sys
@@ -10,27 +20,31 @@ import httpx
 import pymysql
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8001"
-MOCK_PORT = 8009
+MOCK_PORT = 8009  # 假 AI 监听的端口
 STAMP = str(int(time.time()))
-calls = []
+calls = []  # 记下假 AI 被请求过的网址，用来验证「自动补 /chat/completions」
 
 
 class MockLLM(BaseHTTPRequestHandler):
+    """假 AI 服务：模仿 OpenAI 兼容接口的回答格式。"""
+
     def log_message(self, *a):
-        pass
+        pass  # 不打印访问日志，免得刷屏
 
     def do_POST(self):
+        """收到 POST 请求时执行。读出提示词，按规则拼一个假回答。"""
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        prompt = body["messages"][1]["content"]
+        prompt = body["messages"][1]["content"]  # messages[1] 是 user 那条（[0] 是 system 人设）
         calls.append(self.path)
         resume = prompt.split("## 简历内容", 1)[1]
-        name = re.search(r"姓名[:：]\s*(\S+)", resume).group(1)
-        pos_ids = [int(x) for x in re.findall(r'"id":\s*(\d+)', prompt.split("## 简历内容")[0])]
+        name = re.search(r"姓名[:：]\s*(\S+)", resume).group(1)  # 从「姓名：xxx」里抠出名字
+        pos_ids = [int(x) for x in re.findall(r'"id":\s*(\d+)', prompt.split("## 简历内容")[0])]  # 岗位列表里的编号
         if "NOPOS" in resume:
             out = {"name": name, "position_id": None, "result": "", "reason": "简历方向与所有岗位无关"}
         else:
             out = {"name": name, "position_id": pos_ids[0], "result": "fail" if "FAILME" in resume else "pass",
                    "reason": "mock 评估理由"}
+        # 故意加 ```json 围栏，测试 parse_json_object 能不能剥掉
         content = "```json\n" + json.dumps(out, ensure_ascii=False) + "\n```"
         resp = json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
         self.send_response(200)
