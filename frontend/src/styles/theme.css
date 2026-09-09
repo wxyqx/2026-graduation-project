@@ -1,0 +1,61 @@
+/*
+ * 【这个文件是干什么的？】
+ * 全站样式：护眼主题的颜色变量 + 一些通用小样式。
+ * Element Plus 所有组件的颜色都读 --el-xxx 这些 CSS 变量，我们在 html.eye-care 下改掉它们，组件就跟着变色。
+ */
+
+/* ---- 护眼主题：米黄底、墨绿主色 ---- */
+html.eye-care {
+  --el-bg-color: #f6f2e4;
+  --el-bg-color-page: #efe9d8;
+  --el-bg-color-overlay: #faf7ec;
+  --el-fill-color-blank: #f6f2e4;
+  --el-fill-color-light: #eee8d6;
+  --el-fill-color-lighter: #f2edde;
+  --el-border-color: #d9d1b8;
+  --el-border-color-light: #e3dcc6;
+  --el-border-color-lighter: #ebe5d2;
+  --el-text-color-primary: #3d3a2f;
+  --el-text-color-regular: #56523f;
+  --el-text-color-secondary: #7d7860;
+  --el-color-primary: #5f8f5f;
+  --el-color-primary-light-3: #86ad86;
+  --el-color-primary-light-5: #a8c5a8;
+  --el-color-primary-light-7: #cbdccb;
+  --el-color-primary-light-8: #dde8dd;
+  --el-color-primary-light-9: #eef3ee;
+  --el-color-primary-dark-2: #4c744c;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--el-bg-color-page);
+  color: var(--el-text-color-primary);
+  font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  transition: background-color 0.2s;
+}
+
+/* 表格里的岗位要求太长时只显示一行，鼠标放上去看全文 */
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 页面顶部的标题行：标题在左，按钮在右 */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.page-header h2 {
+  margin: 0;
+  font-size: 18px;
+}

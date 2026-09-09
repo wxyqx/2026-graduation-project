@@ -46,7 +46,7 @@ npm install
 npm run dev
 ```
 
-浏览器打开 http://127.0.0.1:5173，点「检测后端与数据库」看到绿色成功即部署完成。
+浏览器打开 http://127.0.0.1:5173，先注册一个账号，再进后台使用（首页“检测后端与数据库”仅在 M1 验证用）。
 
 ## 后端结构
 
@@ -64,10 +64,26 @@ backend/app/
 - 撤回：已淘汰/已录用 → 清当前阶段结果、原地恢复进行中；进行中 → 退回上一阶段并清上一阶段结果；指定 `toStage` → 清该阶段及之后全部数据
 - AI 录入不保存 PDF 与简历文本，只写 `ai_result` / `ai_comment`；同名视为同一候选人
 
+## 前端结构
+
+```
+frontend/src/
+  main.js        总开关：Element Plus、图标、路由、主题
+  App.vue        根组件：el-config-provider 中文语言
+  api/http.js    axios 实例：自动带 token、401 自动跳登录、错误统一弹中文提示
+  api/index.js   每个后端接口包成一个函数
+  stores/auth.js 登录状态（token + 用户），localStorage 持久化
+  router/index.js 路由 + 守卫：未登录访问后台 → /login
+  layouts/AdminLayout.vue 后台布局：左菜单 + 顶栏（5 个速览数字 + 主题切换）
+  views/         登录 / 注册 / 岗位管理 / 投递列表 / 投递详情 /（汇总导出、设置 M4）
+  theme.js + styles/theme.css  三档主题：白天 / 黑夜(Element dark) / 护眼(米黄)，localStorage 保持
+  constants.js   8 阶段 / 状态 / 结果的中文名单（照后端数据字典）
+```
+
 ## 进度
 
 - [x] M1 环境 + 项目骨架
 - [x] M2 后端：认证 + CRUD + 状态机 + AI 录入 + 统计/导出（2026-09-08）
-- [ ] M3 前端骨架：登录/注册 + 导航布局 + 主题
-- [ ] M4 前端功能页
+- [x] M3 前端骨架：登录/注册 + 路由守卫 + 左菜单 + 顶部状态栏 + 三档主题 + 岗位/投递/详情页（2026-09-09）
+- [ ] M4 前端功能：汇总导出页、系统设置（AI 配置）、AI 录入简历弹窗、AI 重筛、导出下载
 - [ ] M5 收尾打包
