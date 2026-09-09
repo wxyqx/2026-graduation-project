@@ -92,7 +92,6 @@ async function remove(row) {
 
     <el-card shadow="never">
       <el-table :data="list" v-loading="loading" stripe empty-text="还没有岗位，点右上角新建一个">
-        <el-table-column prop="id" label="编号" width="70" />
         <el-table-column prop="position_name" label="岗位名称" min-width="160" />
         <el-table-column prop="owner" label="负责人" width="120">
           <template #default="{ row }">{{ row.owner || '—' }}</template>
