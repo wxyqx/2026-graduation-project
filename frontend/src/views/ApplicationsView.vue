@@ -15,6 +15,7 @@ import { useRouter } from 'vue-router'
 import { applicationApi, candidateApi, positionApi } from '../api'
 import { RESULT_LABEL, STAGES, STAGE_LABEL, STATUSES, STATUS_LABEL, STATUS_TYPE } from '../constants'
 import { fmtTime } from '../utils/format'
+import AIIntakeDialog from './AIIntakeDialog.vue'
 
 const router = useRouter()
 const refreshStats = inject('refreshStats')
@@ -140,6 +141,15 @@ async function submitCreate() {
 }
 
 const hasFilter = computed(() => filters.stage || filters.status || filters.pos_id)
+
+// ---- AI 录入弹窗 ----
+const intakeVisible = ref(false)
+function onIntakeClosed() {
+  // AI 录完建了新投递，刷新列表和顶部统计
+  load()
+  loadPositions()
+  refreshStats?.()
+}
 </script>
 
 <template>
@@ -147,7 +157,7 @@ const hasFilter = computed(() => filters.stage || filters.status || filters.pos_
     <div class="page-header">
       <h2>投递列表</h2>
       <div>
-        <el-button disabled title="M4 实现">
+        <el-button type="success" plain @click="intakeVisible = true">
           <el-icon><MagicStick /></el-icon>&nbsp;AI 录入简历
         </el-button>
         <el-button type="primary" @click="openCreate">
@@ -254,6 +264,9 @@ const hasFilter = computed(() => filters.stage || filters.status || filters.pos_
         <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- AI 录入简历弹窗 -->
+    <AIIntakeDialog :visible="intakeVisible" @close="onIntakeClosed" />
   </div>
 </template>
 

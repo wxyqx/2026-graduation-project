@@ -43,3 +43,39 @@ export const applicationApi = {
 export const statsApi = {
   overview: () => http.get('/stats/overview'),
 }
+
+// ---- AI 录入简历 ----
+// files: 浏览器 File 对象数组（PDF）；texts: 粘贴的纯文本数组。一个请求里传文件+文字都行。
+export async function uploadIntake(files, texts) {
+  const fd = new FormData()
+  for (const f of files) fd.append('files', f)
+  for (const t of texts) fd.append('texts', t)
+  return http.post('/ai-screen/intake', fd, { timeout: 180000 }) // AI 可能想得慢，多等一会
+}
+
+// ---- AI 接口配置 ----
+export const aiConfigApi = {
+  list: () => http.get('/ai-configs'),
+  create: (data) => http.post('/ai-configs', data),
+  update: (id, data) => http.put(`/ai-configs/${id}`, data),
+  remove: (id) => http.delete(`/ai-configs/${id}`),
+  enable: (id) => http.put(`/ai-configs/${id}/enable`),
+  disable: (id) => http.put(`/ai-configs/${id}/disable`),
+}
+
+// ---- 汇总导出 ----
+export const exportFields = () => http.get('/export/fields')
+
+// 导出文件：后端返回的不是 JSON 而是文件字节，所以要特殊处理
+// 返回 { blob, filename, rowCount }；导出失败时抛错（拦截器会弹中文提示）
+export async function exportFile(filters, fields, format) {
+  const resp = await http.post('/export', { filters, fields, format }, { responseType: 'blob', silent: false })
+  // 此时 resp 是完整的 axios 响应（blob 没走成功拦截器的 data 提取，保持原样）
+  const cd = resp.headers['content-disposition'] || ''
+  // 后端用 filename*=UTF-8''投递记录_xxx.xlsx 的形式给文件名，这里解析出来
+  let filename = `投递记录_${Date.now()}.${format}`
+  const m = cd.match(/filename\*=UTF-8''([^;]+)/i)
+  if (m) filename = decodeURIComponent(m[1])
+  const rowCount = Number(resp.headers['x-row-count'] || 0)
+  return { blob: resp.data, filename, rowCount }
+}

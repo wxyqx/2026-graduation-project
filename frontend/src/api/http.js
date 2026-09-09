@@ -25,11 +25,25 @@ http.interceptors.request.use((config) => {
 })
 
 http.interceptors.response.use(
-  (response) => response.data, // 成功：直接把 data 给调用方，少写一层 .data
-  (error) => {
+  (response) => {
+    // 下载文件这类请求要读响应头（文件名、行数），所以把整个响应交回去
+    if (response.config.responseType === 'blob') return response
+    return response.data // 其余：直接把 data 给调用方，少写一层 .data
+  },
+  async (error) => {
     const status = error.response?.status
-    const data = error.response?.data
+    let data = error.response?.data
     const isAuthApi = (error.config?.url || '').includes('/auth/')
+    // 下载接口出错时返回的也是 blob，把它读成文字再解析出后端的提示
+    if (data instanceof Blob) {
+      try {
+        const text = await data.text()
+        const parsed = JSON.parse(text)
+        data = parsed.detail ? { detail: parsed.detail } : parsed
+      } catch {
+        data = null
+      }
+    }
     // 后端的错误说明在 detail 里（字符串），422 参数错误时 detail 是数组、message 是总说明
     const detail =
       typeof data?.detail === 'string' ? data.detail : data?.message || error.message || '请求失败'
