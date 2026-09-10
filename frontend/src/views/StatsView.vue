@@ -115,20 +115,18 @@ async function doExport() {
   <div>
     <div class="page-header"><h2>汇总导出</h2></div>
 
-    <!-- 统计卡 -->
-    <el-row :gutter="14" class="stat-cards">
-      <el-col v-for="c in statCards" :key="c.label" :span="24 / 5">
-        <el-card shadow="never" class="stat-card">
-          <div class="stat-inner">
-            <el-icon :size="30" :style="{ color: c.color }"><component :is="c.icon" /></el-icon>
-            <div>
-              <div class="stat-value">{{ c.value }}</div>
-              <div class="stat-label">{{ c.label }}</div>
-            </div>
+    <!-- 统计卡：5 张平均占满一行 -->
+    <div class="stat-cards">
+      <el-card v-for="c in statCards" :key="c.label" shadow="never" class="stat-card">
+        <div class="stat-inner">
+          <el-icon :size="30" :style="{ color: c.color }"><component :is="c.icon" /></el-icon>
+          <div>
+            <div class="stat-value">{{ c.value }}</div>
+            <div class="stat-label">{{ c.label }}</div>
           </div>
-        </el-card>
-      </el-col>
-    </el-row>
+        </div>
+      </el-card>
+    </div>
 
     <el-row :gutter="14">
       <el-col :span="10">
@@ -223,10 +221,13 @@ async function doExport() {
 
 <style scoped>
 .stat-cards {
+  display: flex;
+  gap: 14px;
   margin-bottom: 14px;
 }
 .stat-card {
-  margin-bottom: 14px;
+  flex: 1; /* 每张平分整行宽度 */
+  min-width: 0;
 }
 .stat-inner {
   display: flex;

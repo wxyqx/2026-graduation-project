@@ -114,7 +114,14 @@ async function remove(row) {
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="editingId === null ? '新建岗位' : '编辑岗位'" width="560px" destroy-on-close>
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editingId === null ? '新建岗位' : '编辑岗位'"
+      width="1120px"
+      top="6vh"
+      destroy-on-close
+      class="position-dialog"
+    >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="岗位名称" prop="position_name">
           <el-input v-model="form.position_name" placeholder="例：Java高级工程师" maxlength="100" />
@@ -126,7 +133,7 @@ async function remove(row) {
           <el-input
             v-model="form.position_requirements"
             type="textarea"
-            :rows="6"
+            :rows="16"
             maxlength="2000"
             show-word-limit
             placeholder="职位描述 / 任职要求。AI 筛简历时拿这段话比对，写得越具体越准"
@@ -144,5 +151,14 @@ async function remove(row) {
 <style scoped>
 .muted {
   color: var(--el-text-color-secondary);
+}
+/* 弹窗右下角可拖拽调整大小（拉宽 / 拉高），最小尺寸与最大尺寸做了限制避免拉坏 */
+:deep(.el-dialog) {
+  resize: both;
+  overflow: auto;
+  min-width: 560px;
+  min-height: 360px;
+  max-width: 96vw;
+  max-height: 90vh;
 }
 </style>
