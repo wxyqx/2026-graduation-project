@@ -45,11 +45,12 @@ export const statsApi = {
 }
 
 // ---- AI 录入简历 ----
-// files: 浏览器 File 对象数组（PDF）；texts: 粘贴的纯文本数组。一个请求里传文件+文字都行。
-export async function uploadIntake(files, texts) {
+// files: 浏览器 File 对象数组（PDF）；texts: 粘贴的纯文本数组；extras: 各岗位的附加条件 {"岗位id": "文字"}
+export async function uploadIntake(files, texts, extras = {}) {
   const fd = new FormData()
   for (const f of files) fd.append('files', f)
   for (const t of texts) fd.append('texts', t)
+  if (extras && Object.keys(extras).length) fd.append('extras', JSON.stringify(extras))
   return http.post('/ai-screen/intake', fd, { timeout: 180000 }) // AI 可能想得慢，多等一会
 }
 

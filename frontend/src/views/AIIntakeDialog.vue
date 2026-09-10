@@ -10,6 +10,7 @@ import { ElMessage } from 'element-plus'
 import { computed, reactive, ref } from 'vue'
 
 import { uploadIntake } from '../api'
+import { positionExtras } from '../stores/positionExtras'
 
 // props：父组件打开弹窗时要传进来
 defineProps({
@@ -53,6 +54,9 @@ const summary = ref(null)
 // 一份都没有就禁用按钮
 const nothingToSubmit = computed(() => fileList.value.length === 0 && textItems.every((x) => !x.text.trim()))
 
+// 有几个岗位设置了「AI 附加条件」（来自浏览器 localStorage）
+const extraCount = computed(() => Object.keys(positionExtras.all()).length)
+
 async function submit() {
   const files = fileList.value.map((f) => f.raw)
   const texts = textItems.map((x) => x.text.trim()).filter((t) => t)
@@ -62,7 +66,8 @@ async function submit() {
   results.value = null
   summary.value = null
   try {
-    const data = await uploadIntake(files, texts)
+    // 带上各岗位在浏览器里存的「AI 附加条件」，后端会拼进提示词
+    const data = await uploadIntake(files, texts, positionExtras.all())
     results.value = data.results
     summary.value = data.summary
     if (data.summary?.ok > 0) ElMessage.success(`AI 录入完成：成功建档 ${data.summary.ok} 条`)
@@ -110,6 +115,14 @@ function close() {
       上传 PDF 简历，AI 自动识别姓名、匹配在招岗位并按岗位要求初筛、建档。PDF 与提取文本都不保存，
       只留判断结果。需先在「系统设置」添加并启用至少一个 AI 接口。
     </p>
+    <el-alert
+      v-if="extraCount > 0"
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      :title="`已启用 ${extraCount} 个岗位的「AI 附加条件」，本次筛选中会作为额外限制一并发给 AI`"
+    />
 
     <div class="upload-zone">
       <el-upload

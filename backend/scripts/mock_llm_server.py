@@ -27,12 +27,15 @@ class MockLLM(BaseHTTPRequestHandler):
         if "NOPOS" in resume:
             out = {"name": name, "position_id": None, "result": "", "reason": "简历方向与在招岗位不相关"}
         else:
-            out = {
-                "name": name,
-                "position_id": pos_ids[0] if pos_ids else None,
-                "result": "fail" if "FAILME" in resume else "pass",
-                "reason": "【mock】简历与岗位要求基本吻合，建议进入下一环节" if "FAILME" not in resume else "【mock】简历与岗位要求差距较大，不建议继续",
-            }
+            # 如果岗位带 extra（附加条件），模拟 AI「因不满足附加条件而判 fail」，便于验证功能
+            has_extra = '"extra"' in pos_text
+            if "FAILME" in resume:
+                result, reason = "fail", "【mock】简历与岗位要求差距较大，不建议继续"
+            elif has_extra:
+                result, reason = "fail", "【mock】该岗位设有附加条件，候选人不满足，故淘汰"
+            else:
+                result, reason = "pass", "【mock】简历与岗位要求基本吻合，建议进入下一环节"
+            out = {"name": name, "position_id": pos_ids[0] if pos_ids else None, "result": result, "reason": reason}
         content = "```json\n" + json.dumps(out, ensure_ascii=False) + "\n```"
         resp = json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
         self.send_response(200)

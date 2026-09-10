@@ -8,6 +8,8 @@
 这个文件只做门口的活：检查登录、检查有没有启用的 AI 配置、把文件读进内存，
 然后交给 services/ai_screen.py 的 run_intake 去跑三步流水线。
 """
+import json
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,6 +29,7 @@ MAX_FILE_BYTES = 20 * 1024 * 1024  # 单个文件最大 20MB（1024 字节 = 1KB
 async def intake(
     files: list[UploadFile] = File(default=[], description="PDF 简历，可一次传多个。扫描件（图片型 PDF）抠不出文字会单独报错，改用 texts"),
     texts: list[str] = Form(default=[], description="粘贴的简历纯文本，可多段（每段一份简历）。没有 PDF 时的兜底方式，至少 30 个字"),
+    extras: str | None = Form(default=None, description='各岗位的额外 AI 筛选限制（JSON 字符串，如 {"1":"只要985"}），前端本地存、不入库'),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -42,7 +45,8 @@ async def intake(
 **怎么填**（Try it out 后）：
 - `files`：点「选择文件」传 PDF，可多选
 - `texts`：没 PDF 就把简历文字粘这里，每一格一份
-- 两者可以混着传，也可以只传一种
+- `extras`：各岗位的额外限制（JSON 字符串，如 `{"1":"只要985/211"}`），前端把岗位编辑框里填的附加条件带过来；不传则只用岗位要求判断
+- 三者可以混着传，也可以只传一种
 
 **每份简历会发生什么**：
 - 抠文字 → 发给 AI → AI 回「姓名 / 岗位编号 / pass 或 fail / 理由」
@@ -100,4 +104,15 @@ async def intake(
         if len(data) > MAX_FILE_BYTES:
             raise HTTPException(status_code=413, detail=f"文件 {f.filename} 超过 20MB")  # 413 = 太大了
         payload.append((f.filename or "resume.pdf", data))
-    return await run_intake(db, payload, texts, configs)
+
+    # 解析前端传来的岗位附加条件（JSON 字符串）。格式不对就忽略，不让整个请求失败
+    extra_map: dict[str, str] = {}
+    if extras:
+        try:
+            parsed = json.loads(extras)
+            if isinstance(parsed, dict):
+                extra_map = {str(k): str(v) for k, v in parsed.items() if str(v).strip()}
+        except (ValueError, TypeError):
+            extra_map = {}
+
+    return await run_intake(db, payload, texts, configs, extra_map)

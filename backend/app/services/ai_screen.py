@@ -75,12 +75,20 @@ class IntakeItem:
         return d
 
 
-def _positions_block(positions: list[Position]) -> str:
-    """把所有岗位整理成一段 JSON 文字，塞进给 AI 的提示词里，让它知道有哪些岗位可选。"""
-    rows = [
-        {"id": p.id, "name": p.position_name or "", "requirements": (p.position_requirements or "")[:1500]}
-        for p in positions
-    ]
+def _positions_block(positions: list[Position], extras: dict[str, str] | None = None) -> str:
+    """把所有岗位整理成一段 JSON 文字，塞进给 AI 的提示词里，让它知道有哪些岗位可选。
+
+    extras：各岗位的额外限制（来自前端浏览器，不入库），形如 {"1": "只要985"}。
+    有的话就作为 extra 字段加进对应岗位，AI 判断时要一并满足。
+    """
+    extras = extras or {}
+    rows = []
+    for p in positions:
+        row = {"id": p.id, "name": p.position_name or "", "requirements": (p.position_requirements or "")[:1500]}
+        extra = (extras.get(str(p.id)) or "").strip()
+        if extra:
+            row["extra"] = extra[:500]  # 附加条件，AI 必须同样满足
+        rows.append(row)
     return json.dumps(rows, ensure_ascii=False, indent=1)  # ensure_ascii=False 让中文正常显示，不变成 \uXXXX
 
 
@@ -96,7 +104,9 @@ def _user_prompt(positions_block: str, resume_text: str) -> str:
         "2. 从岗位列表中选出该简历最可能应聘的一个岗位，把其 id 填入 position_id；"
         "若简历方向与所有岗位都不相关，position_id 填 null。\n"
         "3. 若匹配到岗位，严格依据该岗位的 requirements 判断 result 为 \"pass\" 或 \"fail\"，"
-        "并在 reason 中用不超过 120 字说明理由（未匹配岗位时 reason 说明原因）。\n\n"
+        "并在 reason 中用不超过 120 字说明理由（未匹配岗位时 reason 说明原因）。\n"
+        "4. 若该岗位还带 extra 字段（额外的硬性限制），必须同时满足 extra 才算 pass；"
+        "只要违反 extra 中任何一条，一律判 fail，并在 reason 中指出违反了哪一条。\n\n"
         "输出格式（仅此 JSON）：\n"
         '{"name": "张三", "position_id": 1, "result": "pass", "reason": "..."}'
     )
@@ -221,12 +231,16 @@ async def run_intake(
     files: list[tuple[str, bytes]],
     texts: list[str],
     configs: list[AiApiConfig],
+    extras: dict[str, str] | None = None,
 ) -> dict:
-    """总入口：接口层把文件和文字交过来，这里跑完三步流水线，返回每一份的结果。"""
+    """总入口：接口层把文件和文字交过来，这里跑完三步流水线，返回每一份的结果。
+
+    extras：各岗位的额外 AI 筛选限制（前端浏览器本地存的，不入库），形如 {"1": "只要985"}。
+    """
     # 准备岗位清单（AI 要从里面选）
     positions = db.scalars(select(Position).order_by(Position.id)).all()
     pos_map = {p.id: p for p in positions}  # 编号 → 岗位对象，后面按编号快速查
-    positions_block = _positions_block(positions)
+    positions_block = _positions_block(positions, extras)  # 把附加条件一并注入给 AI
 
     # ---- 第 1 步：抠文字，每份简历变成一个 IntakeItem ----
     items: list[IntakeItem] = []
