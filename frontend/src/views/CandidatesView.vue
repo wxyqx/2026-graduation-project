@@ -73,7 +73,7 @@ async function remove(row) {
     </div>
 
     <el-card shadow="never">
-      <el-table :data="list" v-loading="loading" stripe empty-text="暂无候选人">
+      <el-table :data="list" v-loading="loading" border empty-text="暂无候选人">
         <el-table-column prop="name" label="姓名" min-width="120" />
         <el-table-column prop="remark" label="备注" min-width="180">
           <template #default="{ row }">{{ row.remark || '—' }}</template>

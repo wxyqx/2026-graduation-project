@@ -59,3 +59,16 @@ body {
   margin: 0;
   font-size: 18px;
 }
+
+/* ---- 表格：加深分隔线 + 表头浅底色，避免行与行之间看不清、整表显空 ---- */
+.el-table {
+  /* Element Plus 默认用最浅的边框色（#EBEEF5），换成深一档的常规边框色 */
+  --el-table-border-color: var(--el-border-color);
+  /* 表头加一层浅灰底，和内容区分开 */
+  --el-table-header-bg-color: var(--el-fill-color-light);
+  --el-table-row-hover-bg-color: var(--el-color-primary-light-9);
+}
+.el-table th.el-table__cell {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}

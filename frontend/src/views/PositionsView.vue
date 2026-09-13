@@ -103,7 +103,7 @@ async function remove(row) {
     </div>
 
     <el-card shadow="never">
-      <el-table :data="list" v-loading="loading" stripe empty-text="还没有岗位，点右上角新建一个">
+      <el-table :data="list" v-loading="loading" border empty-text="还没有岗位，点右上角新建一个">
         <el-table-column prop="position_name" label="岗位名称" min-width="180">
           <template #default="{ row }">
             {{ row.position_name }}

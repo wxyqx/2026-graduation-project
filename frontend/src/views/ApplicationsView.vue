@@ -190,7 +190,7 @@ function onIntakeClosed() {
     </el-card>
 
     <el-card shadow="never">
-      <el-table :data="list" v-loading="loading" stripe empty-text="暂无投递记录">
+      <el-table :data="list" v-loading="loading" border :row-style="{ height: '52px' }" empty-text="暂无投递记录">
         <el-table-column prop="candidate_name" label="候选人" min-width="120" />
         <el-table-column prop="position_name" label="岗位" min-width="160" />
         <el-table-column label="当前阶段" width="120">
