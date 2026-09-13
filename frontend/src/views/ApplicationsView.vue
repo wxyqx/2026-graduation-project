@@ -21,12 +21,24 @@ const router = useRouter()
 const route = useRoute()
 const refreshStats = inject('refreshStats')
 
+// 上次用的筛选条件存这里（浏览器会话级）：从别的页面点回「投递列表」时自动恢复
+const FILTER_KEY = 'ats_app_filters'
+function savedFilters() {
+  try {
+    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
 // ---- 筛选 + 列表 ----
-// 初始值从网址参数里读（?stage=ai&status=pending&pos_id=1），这样刷新/收藏后筛选条件不丢
+// 初始值优先取网址参数（?stage=ai&status=pending&pos_id=1，支持刷新/收藏/分享）；
+// 网址里没有就恢复上次用的筛选（从别的菜单页点回来时也能接上）
+const saved = savedFilters()
 const filters = reactive({
-  stage: route.query.stage || '',
-  status: route.query.status || '',
-  pos_id: route.query.pos_id ? Number(route.query.pos_id) : '',
+  stage: route.query.stage || saved.stage || '',
+  status: route.query.status || saved.status || '',
+  pos_id: route.query.pos_id ? Number(route.query.pos_id) : saved.pos_id || '',
 })
 const list = ref([])
 const loading = ref(false)
@@ -48,7 +60,7 @@ async function loadPositions() {
   positions.value = await positionApi.list()
 }
 
-// 筛选条件一变：① 更新网址参数（刷新后能还原）② 重新查列表
+// 筛选条件一变：① 存起来（下次点回来能恢复）② 更新网址参数 ③ 重新查列表
 // replace 而不是 push，避免每选一次就多一条浏览器历史
 watch(
   filters,
@@ -58,17 +70,37 @@ watch(
     if (filters.status) query.status = filters.status
     if (filters.pos_id) query.pos_id = String(filters.pos_id)
     router.replace({ query })
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ stage: filters.stage, status: filters.status, pos_id: filters.pos_id }))
     load()
   },
-  { deep: true },
+  // immediate: 进入页面时也执行一次，保证「网址带参数进来」的筛选也会被记下来
+  { deep: true, immediate: true },
 )
 
-onMounted(() => {
-  load()
-  loadPositions()
-})
+onMounted(loadPositions)
+
+// 组件被复用（比如从别的菜单页点回投递列表）时，上面那段初始化不会再跑一次，
+// 所以单独监听路由：每次进入这个页面，按「网址参数 → 上次存的」顺序把筛选补上。
+watch(
+  () => route.path,
+  (path) => {
+    if (path !== '/applications') return
+    const s = savedFilters()
+    const next = {
+      stage: route.query.stage || s.stage || '',
+      status: route.query.status || s.status || '',
+      pos_id: route.query.pos_id ? Number(route.query.pos_id) : s.pos_id || '',
+    }
+    // 只有跟当前不同才赋值，避免和上面那个 watch 打架、死循环
+    if (next.stage !== filters.stage || next.status !== filters.status || next.pos_id !== filters.pos_id) {
+      Object.assign(filters, next)
+    }
+  },
+)
 
 function resetFilters() {
+  // 清空筛选：网址参数和浏览器里存的记录一起清掉，免得点回来又恢复
+  sessionStorage.removeItem(FILTER_KEY)
   Object.assign(filters, { stage: '', status: '', pos_id: '' })
   // watch 会自动清空网址参数并重新查询，这里不用再手动 load
 }
