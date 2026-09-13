@@ -30,6 +30,13 @@ async function load() {
 }
 onMounted(load)
 
+// 返回列表：能用浏览器后退就用后退（这样能带着原来的筛选条件回到列表页）；
+// 如果是直接打开这个详情网址（没有上一页），就退回投递列表首页
+function goBack() {
+  if (window.history.length > 1) router.back()
+  else router.push({ name: 'applications' })
+}
+
 // el-steps 的 active 是「已完成到第几步」的数字：当前关的下标
 const activeIndex = computed(() => {
   if (!app.value) return 0
@@ -84,7 +91,7 @@ async function revert() {
   <div v-loading="loading">
     <div class="page-header">
       <div class="title-row">
-        <el-button link @click="router.push({ name: 'applications' })">
+        <el-button link @click="goBack">
           <el-icon><ArrowLeft /></el-icon>&nbsp;返回列表
         </el-button>
         <h2 v-if="app">投递详情 #{{ app.id }}</h2>

@@ -9,8 +9,8 @@
 -->
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, inject, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { applicationApi, candidateApi, positionApi } from '../api'
 import { RESULT_LABEL, STAGES, STAGE_LABEL, STATUSES, STATUS_LABEL, STATUS_TYPE } from '../constants'
@@ -18,10 +18,16 @@ import { fmtTime } from '../utils/format'
 import AIIntakeDialog from './AIIntakeDialog.vue'
 
 const router = useRouter()
+const route = useRoute()
 const refreshStats = inject('refreshStats')
 
 // ---- 筛选 + 列表 ----
-const filters = reactive({ stage: '', status: '', pos_id: '' })
+// 初始值从网址参数里读（?stage=ai&status=pending&pos_id=1），这样刷新/收藏后筛选条件不丢
+const filters = reactive({
+  stage: route.query.stage || '',
+  status: route.query.status || '',
+  pos_id: route.query.pos_id ? Number(route.query.pos_id) : '',
+})
 const list = ref([])
 const loading = ref(false)
 const positions = ref([])
@@ -41,6 +47,22 @@ async function load() {
 async function loadPositions() {
   positions.value = await positionApi.list()
 }
+
+// 筛选条件一变：① 更新网址参数（刷新后能还原）② 重新查列表
+// replace 而不是 push，避免每选一次就多一条浏览器历史
+watch(
+  filters,
+  () => {
+    const query = {}
+    if (filters.stage) query.stage = filters.stage
+    if (filters.status) query.status = filters.status
+    if (filters.pos_id) query.pos_id = String(filters.pos_id)
+    router.replace({ query })
+    load()
+  },
+  { deep: true },
+)
+
 onMounted(() => {
   load()
   loadPositions()
@@ -48,7 +70,7 @@ onMounted(() => {
 
 function resetFilters() {
   Object.assign(filters, { stage: '', status: '', pos_id: '' })
-  load()
+  // watch 会自动清空网址参数并重新查询，这里不用再手动 load
 }
 
 // ---- 行内操作：通过 / 淘汰 / 撤回 ----
@@ -169,17 +191,17 @@ function onIntakeClosed() {
     <el-card shadow="never" class="filter-card">
       <el-form inline>
         <el-form-item label="阶段">
-          <el-select v-model="filters.stage" placeholder="全部" clearable style="width: 140px" @change="load">
+          <el-select v-model="filters.stage" placeholder="全部" clearable style="width: 140px">
             <el-option v-for="s in STAGES" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 130px" @change="load">
+          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 130px">
             <el-option v-for="s in STATUSES" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="岗位">
-          <el-select v-model="filters.pos_id" placeholder="全部" clearable filterable style="width: 200px" @change="load">
+          <el-select v-model="filters.pos_id" placeholder="全部" clearable filterable style="width: 200px">
             <el-option v-for="p in positions" :key="p.id" :label="p.position_name" :value="p.id" />
           </el-select>
         </el-form-item>
