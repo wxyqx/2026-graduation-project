@@ -10,7 +10,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 
-import { aiConfigApi } from '../api'
+import { aiConfigApi, promptApi } from '../api'
 
 const list = ref([])
 const loading = ref(false)
@@ -24,6 +24,50 @@ async function load() {
   }
 }
 onMounted(load)
+
+// ---- AI 筛选提示词 ----
+const promptRules = ref('') // 输入框里的筛选规则
+const promptDefault = ref('') // 系统默认规则（供「恢复默认」）
+const promptFormat = ref('') // 系统锁定的格式说明（只读展示）
+const promptSaved = ref(false) // 当前是否已保存过自定义规则
+const savingPrompt = ref(false)
+
+async function loadPrompt() {
+  const d = await promptApi.get()
+  promptRules.value = d.rules
+  promptDefault.value = d.default_rules
+  promptFormat.value = d.format_rules
+  promptSaved.value = d.is_custom
+}
+onMounted(loadPrompt)
+
+async function savePrompt() {
+  savingPrompt.value = true
+  try {
+    const d = await promptApi.save(promptRules.value)
+    promptRules.value = d.rules
+    promptSaved.value = d.is_custom
+    ElMessage.success('提示词已保存，下次 AI 录入立刻生效')
+  } finally {
+    savingPrompt.value = false
+  }
+}
+
+function restoreDefaultPrompt() {
+  promptRules.value = promptDefault.value
+}
+
+async function clearPrompt() {
+  savingPrompt.value = true
+  try {
+    const d = await promptApi.save('') // 传空 = 删掉自定义，回到系统默认
+    promptRules.value = d.rules
+    promptSaved.value = d.is_custom
+    ElMessage.success('已恢复为系统默认规则')
+  } finally {
+    savingPrompt.value = false
+  }
+}
 
 // ---- 新建 / 编辑弹窗 ----
 const dialogVisible = ref(false)
@@ -150,6 +194,44 @@ const helpVisible = ref(false)
       </el-table>
     </el-card>
 
+    <!-- AI 筛选提示词 -->
+    <el-card shadow="never" style="margin-top: 14px">
+      <template #header>
+        <div class="card-header">
+          <span>AI 筛选提示词</span>
+          <el-tag v-if="promptSaved" type="success" size="small">已自定义</el-tag>
+          <el-tag v-else type="info" size="small">系统默认</el-tag>
+        </div>
+      </template>
+
+      <p class="muted" style="margin-top: 0">
+        这里写的是<b>筛选规则</b>——AI 判断简历通过与否时遵循的标准（岗位要求之外的额外标准）。
+        它会用在每次「AI 录入简历」里。
+      </p>
+      <el-input
+        v-model="promptRules"
+        type="textarea"
+        :rows="7"
+        maxlength="8000"
+        show-word-limit
+        placeholder="例：&#10;1. 只要 985/211 院校毕业；&#10;2. 必须有医疗行业项目经验；&#10;3. 不接收外包背景；&#10;4. 工作年限不足 3 年的判为不通过。"
+      />
+
+      <div class="format-box">
+        <div class="format-title">回答格式（系统锁定，不可修改）</div>
+        <pre>{{ promptFormat }}</pre>
+        <div class="muted" style="font-size: 12px">
+          这段是程序读取 AI 结果的依据，格式一乱结果就读不出来，所以固定不可改。
+        </div>
+      </div>
+
+      <div class="prompt-actions">
+        <el-button type="primary" :loading="savingPrompt" @click="savePrompt">保存</el-button>
+        <el-button @click="restoreDefaultPrompt">填入默认规则</el-button>
+        <el-button :disabled="!promptSaved" @click="clearPrompt">恢复系统默认</el-button>
+      </div>
+    </el-card>
+
     <el-card shadow="never" style="margin-top: 14px">
       <template #header>主题偏好</template>
       <p class="muted">主题切换在页面右上角（白天 / 黑夜 / 护眼），选择自动保存在本浏览器，刷新后保持。</p>
@@ -208,5 +290,33 @@ const helpVisible = ref(false)
 }
 .muted {
   color: var(--el-text-color-secondary);
+}
+/* 锁定的回答格式说明：灰底只读，让人一看就知道"这部分不用管、也改不了" */
+.format-box {
+  margin-top: 12px;
+  background: var(--el-fill-color-light);
+  border: 1px dashed var(--el-border-color);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.format-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+  margin-bottom: 6px;
+}
+.format-box pre {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--el-text-color-secondary);
+}
+.prompt-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
 }
 </style>

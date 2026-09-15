@@ -24,6 +24,7 @@ from app.models.position import Position  # noqa: E402
 from app.models.candidate import Candidate  # noqa: E402
 from app.models.application import Application  # noqa: E402
 from app.models.ai_api_config import AiApiConfig  # noqa: E402
+from app.models.app_setting import AppSetting  # noqa: E402
 
 # 别的文件写 from app.models import User 就能拿到这些类
-__all__ = ["Base", "User", "Position", "Candidate", "Application", "AiApiConfig"]
+__all__ = ["Base", "User", "Position", "Candidate", "Application", "AiApiConfig", "AppSetting"]

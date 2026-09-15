@@ -183,7 +183,7 @@ def run():
     check(r.status_code == 200, "intake 200")
     res = r.json()["results"]
     check(r.json()["total"] == 5 and len(res) == 5, "5 条逐条返回")
-    check(res[0]["status"] == "error" and "AI 调用失败" in res[0]["message"], "有效 PDF → LLM 不可达 error（已重试）")
+    check(res[0]["status"] == "error" and "无法识别" in res[0]["message"], "有效 PDF → LLM 不可达 error（已重试）")
     check(res[1]["status"] == "extract_failed" and "无法提取文本" in res[1]["message"], "空白 PDF → extract_failed（扫描件）")
     check(res[2]["status"] == "extract_failed" and "仅支持 PDF" in res[2]["message"], "非 PDF → extract_failed")
     check(res[3]["status"] == "extract_failed" and "过短" in res[3]["message"], "短文本 → extract_failed")
@@ -209,6 +209,23 @@ def run():
     check(c.post("/api/export", headers=H, json={"fields": ["hacker"]}).status_code == 400, "非法字段 400")
     check(c.post("/api/export", headers=H, json={"filters": {"stage": "zzz"}}).status_code == 400, "非法 stage 400")
 
+    print("== 系统设置：AI 提示词 ==")
+    check(c.get("/api/settings/ai-prompt").status_code == 401, "提示词接口未登录 401")
+    d = c.get("/api/settings/ai-prompt", headers=H).json()
+    check(d["is_custom"] is False and len(d["rules"]) > 0, "初始为系统默认规则")
+    check("只能是一个 JSON 对象" in d["format_rules"] and "pass" in d["format_rules"], "格式说明锁定并含关键约束")
+    check(len(d["default_rules"]) > 0, "返回默认规则供恢复用")
+    d = c.put("/api/settings/ai-prompt", headers=H, json={"rules": "冒烟测试规则：只招博士"}).json()
+    check(d["is_custom"] is True and d["rules"] == "冒烟测试规则：只招博士", "保存自定义规则")
+    check(c.get("/api/settings/ai-prompt", headers=H).json()["rules"] == "冒烟测试规则：只招博士", "自定义规则已持久化")
+    d = c.put("/api/settings/ai-prompt", headers=H, json={"rules": ""}).json()
+    check(d["is_custom"] is False and d["rules"] == d["default_rules"], "传空恢复系统默认")
+
+    print("== AI 录入：指定岗位 / 参数校验 ==")
+    r = c.post("/api/ai-screen/intake", headers=H, data={"texts": ["x" * 50], "pos_id": "999999"})
+    check(r.status_code == 400, "不存在的 pos_id 400")
+    check(c.post("/api/ai-screen/intake", headers=H).status_code == 400, "intake 空请求 400")
+
     print(f"\n全部通过：{passed} 项断言")
 
 
@@ -222,6 +239,7 @@ def cleanup():
     dele("Application", created["applications"])
     if created["users"]:
         cur.execute(f"DELETE FROM AI_API_Config WHERE User_ID IN ({','.join(map(str, created['users']))})")
+        cur.execute(f"DELETE FROM App_Setting WHERE User_ID IN ({','.join(map(str, created['users']))})")
     dele("Candidate", created["candidates"])
     dele("Position", created["positions"])
     dele("User", created["users"])

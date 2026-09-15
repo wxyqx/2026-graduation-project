@@ -18,6 +18,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import AiApiConfig, User
 from app.services.ai_screen import run_intake
+from app.services.settings import get_setting
 
 router = APIRouter(prefix="/api/ai-screen", tags=["ai-screen"])
 
@@ -30,6 +31,7 @@ async def intake(
     files: list[UploadFile] = File(default=[], description="PDF 简历，可一次传多个。扫描件（图片型 PDF）抠不出文字会单独报错，改用 texts"),
     texts: list[str] = Form(default=[], description="粘贴的简历纯文本，可多段（每段一份简历）。没有 PDF 时的兜底方式，至少 30 个字"),
     extras: str | None = Form(default=None, description='各岗位的额外 AI 筛选限制（JSON 字符串，如 {"1":"只要985"}），前端本地存、不入库'),
+    pos_id: int | None = Form(default=None, description="应聘岗位编号。填了=按这个岗位筛选（AI 只判断是否符合该岗位）；不填=AI 自动识别岗位"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -115,4 +117,11 @@ async def intake(
         except (ValueError, TypeError):
             extra_map = {}
 
-    return await run_intake(db, payload, texts, configs, extra_map)
+    # 取出这个用户在设置页写的 AI 筛选规则（没写过就传 None，服务层会用默认规则）
+    user_rules = get_setting(db, user.id, "ai_prompt")
+
+    try:
+        return await run_intake(db, payload, texts, configs, extra_map, pos_id=pos_id, user_rules=user_rules)
+    except ValueError as e:
+        # 服务层用 ValueError 表示「指定的岗位不存在」这类输入问题，翻译成 400
+        raise HTTPException(status_code=400, detail=str(e))

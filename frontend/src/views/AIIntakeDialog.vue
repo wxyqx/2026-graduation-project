@@ -7,9 +7,9 @@
 -->
 <script setup>
 import { ElMessage } from 'element-plus'
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
-import { uploadIntake } from '../api'
+import { positionApi, uploadIntake } from '../api'
 import { positionExtras } from '../stores/positionExtras'
 
 // props：父组件打开弹窗时要传进来
@@ -17,6 +17,28 @@ defineProps({
   visible: { type: Boolean, default: false }, // 控制弹窗开关
 })
 const emit = defineEmits(['close']) // 关闭时通知父组件（父组件去刷新列表）
+
+// ---- 岗位选择：整批简历都按这个岗位筛；选「自动识别」则让 AI 判断 ----
+const AUTO = 0 // 用 0 代表「自动识别」，因为岗位编号从 1 开始，不会冲突
+const positions = ref([])
+const posId = ref(AUTO)
+
+async function loadPositions() {
+  try {
+    positions.value = await positionApi.list()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+onMounted(loadPositions)
+
+// 选中的是不是自动模式
+const isAuto = computed(() => posId.value === AUTO)
+// 当前选中岗位的名字（用于提交前提示）
+const selectedName = computed(() => {
+  if (isAuto.value) return '自动识别'
+  return positions.value.find((p) => p.id === posId.value)?.position_name || ''
+})
 
 // ---- 文件收集（el-upload 只当选择器用，不自动上传）----
 const uploadRef = ref()
@@ -61,13 +83,17 @@ async function submit() {
   const files = fileList.value.map((f) => f.raw)
   const texts = textItems.map((x) => x.text.trim()).filter((t) => t)
   if (!files.length && !texts.length) return
+  if (!positions.value.length) {
+    ElMessage.warning('系统里还没有岗位，请先到「岗位管理」新建一个')
+    return
+  }
 
   running.value = true
   results.value = null
   summary.value = null
   try {
-    // 带上各岗位在浏览器里存的「AI 附加条件」，后端会拼进提示词
-    const data = await uploadIntake(files, texts, positionExtras.all())
+    // 带上各岗位在浏览器里存的「AI 附加条件」；posId 非自动时指定岗位
+    const data = await uploadIntake(files, texts, positionExtras.all(), isAuto.value ? null : posId.value)
     results.value = data.results
     summary.value = data.summary
     if (data.summary?.ok > 0) ElMessage.success(`AI 录入完成：成功建档 ${data.summary.ok} 条`)
@@ -112,9 +138,32 @@ function close() {
     @close="close"
   >
     <p class="intro">
-      上传 PDF 简历，AI 自动识别姓名、匹配在招岗位并按岗位要求初筛、建档。PDF 与提取文本都不保存，
+      上传 PDF 简历，AI 识别候选人姓名、按所选岗位的要求初筛并建档。PDF 与提取文本都不保存，
       只留判断结果。需先在「系统设置」添加并启用至少一个 AI 接口。
     </p>
+
+    <!-- 应聘岗位：整批简历都按这里选的岗位筛 -->
+    <div class="pos-row">
+      <span class="pos-label">应聘岗位</span>
+      <el-select v-model="posId" style="flex: 1">
+        <el-option :value="0" label="自动识别（由 AI 判断投递岗位）" />
+        <el-option
+          v-for="p in positions"
+          :key="p.id"
+          :value="p.id"
+          :label="p.owner ? `${p.position_name}　—　${p.owner}` : p.position_name"
+        />
+      </el-select>
+    </div>
+    <div class="pos-hint" :class="{ warn: isAuto }">
+      <template v-if="isAuto">
+        AI 会自己从在招岗位里挑一个；挑不出来就不建档。岗位特殊（或有两三个同名岗位）时，建议手动指定。
+      </template>
+      <template v-else>
+        本次上传的简历都按「{{ selectedName }}」筛选：AI 只判断是否符合这个岗位，不会挑别的岗位。
+      </template>
+    </div>
+
     <el-alert
       v-if="extraCount > 0"
       type="warning"
@@ -211,6 +260,27 @@ function close() {
   margin: 0 0 12px;
   font-size: 13px;
   color: var(--el-text-color-secondary);
+}
+/* 岗位选择行 */
+.pos-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.pos-label {
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+  white-space: nowrap;
+}
+.pos-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.7;
+  margin: 0 0 12px 60px;
+}
+.pos-hint.warn {
+  color: var(--el-color-warning);
 }
 .upload-zone {
   margin-bottom: 14px;

@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import text
 
 from app.core.database import engine
-from app.routers import ai_configs, ai_screen, applications, auth, candidates, export, positions, stats
+from app.routers import ai_configs, ai_screen, applications, auth, candidates, export, positions, settings, stats
 
 # /docs 文档页上每个分组的中文说明
 TAGS = [
@@ -31,6 +31,7 @@ TAGS = [
     {"name": "applications", "description": "投递与 8 阶段流程（推进 / 撤回）"},
     {"name": "ai-configs", "description": "AI 接口配置（按登录用户隔离）"},
     {"name": "ai-screen", "description": "AI 智能录入（PDF / 纯文本 → 自动建档）"},
+    {"name": "settings", "description": "系统设置（AI 筛选提示词）"},
     {"name": "stats", "description": "统计总览"},
     {"name": "export", "description": "汇总导出（xlsx / csv）"},
 ]
@@ -89,7 +90,7 @@ app.add_middleware(
 )
 
 # 把 8 组接口全部挂上。每个 routers/xxx.py 里都有一个 router 变量
-for r in (auth, positions, candidates, applications, ai_configs, ai_screen, stats, export):
+for r in (auth, positions, candidates, applications, ai_configs, ai_screen, settings, stats, export):
     app.include_router(r.router)
 
 # 把各接口的中文 docstring 提升为 /docs 里的摘要与描述

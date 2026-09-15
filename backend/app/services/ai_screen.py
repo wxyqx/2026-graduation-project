@@ -4,10 +4,14 @@
 
 整个过程是一条三步流水线：
   第 1 步（顺序做）：每份 PDF 抠出文字。抠不出来的（扫描件）当场标记失败，不影响别人。
-  第 2 步（同时做）：把每份简历发给 AI，让它回答三个问题——这人叫什么？投的是哪个岗位？合不合格？
+  第 2 步（同时做）：把每份简历发给 AI，让它回答：这人叫什么？合不合格（按岗位要求）？
                     好几份一起发（异步并发），多个 AI 配置轮着用，某个 AI 出错自动换一个再试一次。
   第 3 步（顺序做）：根据 AI 的回答写数据库——找/建候选人、建投递、填 AI 成绩、自动推进。
                     一条一条写，不同时写，避免两条同时建同一个人产生冲突。
+
+岗位怎么定？
+  · 你在界面上选了具体岗位 → 只把这一个岗位给 AI，让它判断「符不符合这个岗位」，它挑不了别的岗位。
+  · 你选了「自动识别」   → 把全部岗位给 AI，让它挑一个（提示词里已要求宁可不匹配也别硬凑）。
 
 为什么第 2 步同时做、第 3 步顺序做？——等 AI 回话很慢（几秒），一起等省时间；
 写数据库很快（几毫秒），排队写更安全。
@@ -15,7 +19,6 @@
 隐私：简历原文和 PDF 全程只在内存里，不存数据库、不存硬盘。只有「结果」（pass/fail + 理由）会被记下来。
 """
 import asyncio
-import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -24,18 +27,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AiApiConfig, Application, Candidate, Position
-from app.services import llm
+from app.services import llm, prompt as prompt_svc
 from app.services import state_machine as sm
 from app.services.pdf import PdfExtractError, extract_text
 
 MAX_RESUME_CHARS = 8000  # 简历太长就截到 8000 字，够 AI 判断了，还省钱（AI 按字数收费）
 CONCURRENCY = 4  # 最多同时问 4 个 AI 请求，太多容易被对方限流
-
-# 给 AI 的「人设」
-SYSTEM_PROMPT = (
-    "你是一名专业的招聘助理，负责阅读候选人简历、匹配应聘岗位并做初步筛选。"
-    "你必须只输出一个 JSON 对象，不要输出任何解释、markdown 或多余文字。"
-)
 
 
 @dataclass
@@ -51,9 +48,9 @@ class IntakeItem:
     status: str = "pending"  # 处理状态，最终会变成下面 5 种之一：
     #   ok            ：成功建档
     #   duplicate     ：这个人已经投过这个岗位，没重复建
-    #   no_position   ：AI 觉得简历跟所有岗位都不搭，没建档
+    #   no_position   ：没匹配到岗位（自动模式下 AI 说都不搭），没建档
     #   extract_failed：PDF 抠不出文字 / 不是 PDF / 文字太短
-    #   error         ：AI 调用失败或回答格式不对
+    #   error         ：AI 调用失败、或它回的格式实在看不懂
     message: str | None = None  # 给用户看的一句话说明
     candidate_id: int | None = None
     candidate_name: str | None = None
@@ -63,56 +60,28 @@ class IntakeItem:
     ai_result: str | None = None  # AI 打的分：pass / fail
     ai_comment: str | None = None  # AI 给的理由
     config_used: str | None = None  # 最终是哪个 AI 配置回答的
-    # 下面两个是中间数据，repr=False 表示打印时不显示（简历原文太长）
+    # 下面几个是中间数据，repr=False 表示打印时不显示（简历原文太长）
     text: str | None = field(default=None, repr=False)  # 简历原文（只在内存里）
-    llm_obj: dict | None = field(default=None, repr=False)  # AI 回的 JSON 解析后的字典
+    parsed: dict | None = field(default=None, repr=False)  # 解析后的 AI 回答
 
     def to_dict(self) -> dict:
         """转成字典回给前端。把简历原文和 AI 原始回答去掉，只留结果。"""
         d = asdict(self)
         d.pop("text", None)
-        d.pop("llm_obj", None)
+        d.pop("parsed", None)
         return d
 
 
-def _positions_block(positions: list[Position], extras: dict[str, str] | None = None) -> str:
-    """把所有岗位整理成一段 JSON 文字，塞进给 AI 的提示词里，让它知道有哪些岗位可选。
-
-    extras：各岗位的额外限制（来自前端浏览器，不入库），形如 {"1": "只要985"}。
-    有的话就作为 extra 字段加进对应岗位，AI 判断时要一并满足。
-    """
-    extras = extras or {}
-    rows = []
-    for p in positions:
-        row = {"id": p.id, "name": p.position_name or "", "requirements": (p.position_requirements or "")[:1500]}
-        extra = (extras.get(str(p.id)) or "").strip()
-        if extra:
-            row["extra"] = extra[:500]  # 附加条件，AI 必须同样满足
-        rows.append(row)
-    return json.dumps(rows, ensure_ascii=False, indent=1)  # ensure_ascii=False 让中文正常显示，不变成 \uXXXX
-
-
-def _user_prompt(positions_block: str, resume_text: str) -> str:
-    """拼出给 AI 的完整问题：岗位列表 + 简历 + 三个任务 + 要求的回答格式。"""
-    return (
-        "## 在招岗位列表（JSON）\n"
-        f"{positions_block}\n\n"
-        "## 简历内容\n"
-        f"{resume_text[:MAX_RESUME_CHARS]}\n\n"
-        "## 任务\n"
-        "1. 识别候选人姓名，填入 name；确实无法识别时填空字符串。\n"
-        "2. 从岗位列表中选出该简历最可能应聘的一个岗位，把其 id 填入 position_id；"
-        "若简历方向与所有岗位都不相关，position_id 填 null。\n"
-        "3. 若匹配到岗位，严格依据该岗位的 requirements 判断 result 为 \"pass\" 或 \"fail\"，"
-        "并在 reason 中用不超过 120 字说明理由（未匹配岗位时 reason 说明原因）。\n"
-        "4. 若该岗位还带 extra 字段（额外的硬性限制），必须同时满足 extra 才算 pass；"
-        "只要违反 extra 中任何一条，一律判 fail，并在 reason 中指出违反了哪一条。\n\n"
-        "输出格式（仅此 JSON）：\n"
-        '{"name": "张三", "position_id": 1, "result": "pass", "reason": "..."}'
-    )
-
-
-async def _screen_one(idx: int, item: IntakeItem, configs: list[AiApiConfig], positions_block: str, sem: asyncio.Semaphore):
+async def _screen_one(
+    idx: int,
+    item: IntakeItem,
+    configs: list[AiApiConfig],
+    positions_block: str,
+    fixed_position: Position | None,
+    user_rules: str | None,
+    pos_map: dict[int, Position],
+    sem: asyncio.Semaphore,
+):
     """第 2 步：把一份简历发给 AI。这是「并发」执行的——好几份同时跑这个函数。
 
     轮询 + 重试的规则：
@@ -120,23 +89,43 @@ async def _screen_one(idx: int, item: IntakeItem, configs: list[AiApiConfig], po
       失败了就换下一个配置再试一次；两次都失败就标记 error。
       只有 1 个配置时，两次用的是同一个（相当于简单重试）。
 
+    「失败」不只看网络错误——AI 答得看不懂（没认出通过/淘汰、JSON 不合规）也算失败，会重试一次。
+    重试时会追加更严厉的格式要求，往往第二次就正常了。
+
     sem（信号量）像停车场的车位：只有 CONCURRENCY 个位，满了就在门口等，防止一次发太多请求。
     """
     n = len(configs)
     first = configs[idx % n]
     second = configs[(idx + 1) % n]
-    last_err: Exception | None = None
+    last_err: str | None = None
+
     async with sem:  # 占一个车位
-        for cfg in (first, second):
+        for attempt, cfg in enumerate((first, second)):
             try:
-                content = await llm.chat(cfg, SYSTEM_PROMPT, _user_prompt(positions_block, item.text or ""))
-                item.llm_obj = llm.parse_json_object(content)
+                user_prompt = prompt_svc.build_user_prompt(
+                    positions_block,
+                    item.text or "",
+                    fixed_position=fixed_position,
+                    resume_chars=MAX_RESUME_CHARS,
+                    strict=(attempt > 0),  # 第二次重试时措辞更严厉
+                )
+                content = await llm.chat(cfg, prompt_svc.build_system_prompt(user_rules), user_prompt)
+                parsed = prompt_svc.parse_answer(content, pos_map, fixed_position)
+                # 答非所问也算失败：必须能认出「通过/淘汰」；自动模式下还必须有匹配的岗位
+                if parsed["result"] is None:
+                    last_err = f"没能理解 AI 的结论（它回的是：{str(parsed['obj'])[:120]}）"
+                    continue
+                if fixed_position is None and parsed["position"] is None:
+                    # 自动模式下没匹配到岗位是正常结果，不是错误，直接采用
+                    pass
+                item.parsed = parsed
                 item.config_used = cfg.name
-                return  # 成功了，直接结束
-            except llm.LlmError as e:
-                last_err = e  # 记下错误，换下一个配置继续
+                return
+            except (llm.LlmError, ValueError) as e:
+                # LlmError：网络/接口出错；ValueError：回答里找不到合法 JSON
+                last_err = str(e)
     item.status = "error"
-    item.message = f"AI 调用失败（已重试）：{last_err}"
+    item.message = f"AI 回答无法识别（已重试）：{last_err}"
 
 
 def _fallback_name(item: IntakeItem) -> str | None:
@@ -147,33 +136,27 @@ def _fallback_name(item: IntakeItem) -> str | None:
     return None
 
 
-def _persist(db: Session, item: IntakeItem, pos_map: dict[int, Position], now: datetime) -> None:
+def _persist(db: Session, item: IntakeItem, now: datetime) -> None:
     """第 3 步：根据 AI 的回答写数据库。一次处理一份。
 
-    顺序是：整理 AI 回答 → 检查岗位 → 检查姓名和成绩 → 找/建候选人 → 查重 → 建投递并推进。
+    顺序是：整理回答 → 检查岗位 → 检查姓名和成绩 → 找/建候选人 → 查重 → 建投递并推进。
     任何一步不满足就设好 status 和 message 直接 return，后面的不做。
     """
-    obj = item.llm_obj or {}
-    # ---- 整理 AI 的回答（AI 回的东西不可全信，每个字段都要清洗）----
-    name = str(obj.get("name") or "").strip()[:255] or _fallback_name(item)
-    reason = str(obj.get("reason") or "").strip()[:500]  # 表里 ai_comment 最多 500 字
-    result = str(obj.get("result") or "").strip().lower()
-    raw_pos = obj.get("position_id")
-    try:
-        # AI 可能回 1、"1"、null、""……统一转成整数或 None
-        pos_id = int(raw_pos) if raw_pos is not None and str(raw_pos).strip() != "" else None
-    except (TypeError, ValueError):
-        pos_id = None
+    p = item.parsed or {}
+    position: Position | None = p.get("position")
+    result: str | None = p.get("result")
+    # 姓名的清洗：AI 给的名字优先，没有就用文件名兜底
+    name = (p.get("name") or "").strip()[:255] or _fallback_name(item)
+    reason = (p.get("reason") or "").strip()[:500]  # 表里 ai_comment 最多 500 字
 
     item.candidate_name = name
     item.ai_comment = reason or None
 
-    # ---- 检查岗位：AI 说没匹配、或者编了个不存在的编号，都算未匹配 ----
-    if pos_id is None or pos_id not in pos_map:
+    # ---- 检查岗位：没匹配上就不建档 ----
+    if position is None:
         item.status = "no_position"
         item.message = reason or "未匹配到相关在招岗位，未建档"
         return
-    position = pos_map[pos_id]
     item.position_id = position.id
     item.position_name = position.position_name
 
@@ -184,7 +167,7 @@ def _persist(db: Session, item: IntakeItem, pos_map: dict[int, Position], now: d
         return
     if result not in sm.RESULTS:
         item.status = "error"
-        item.message = f"模型返回的 result 不是 pass/fail：{result or '空'}"
+        item.message = f"没能识别 AI 的结论：{p.get('obj')}"
         return
     item.ai_result = result
 
@@ -232,15 +215,30 @@ async def run_intake(
     texts: list[str],
     configs: list[AiApiConfig],
     extras: dict[str, str] | None = None,
+    pos_id: int | None = None,
+    user_rules: str | None = None,
 ) -> dict:
     """总入口：接口层把文件和文字交过来，这里跑完三步流水线，返回每一份的结果。
 
-    extras：各岗位的额外 AI 筛选限制（前端浏览器本地存的，不入库），形如 {"1": "只要985"}。
+    extras    ：各岗位的额外 AI 筛选限制（前端浏览器本地存的，不入库），形如 {"1": "只要985"}。
+    pos_id    ：用户在界面上指定的岗位编号；不传 = 自动识别。
+    user_rules：用户在设置页写的筛选规则；不传 = 用内置默认规则。
     """
-    # 准备岗位清单（AI 要从里面选）
+    # 准备岗位清单（AI 要从里面选，或者只用指定的那一个）
     positions = db.scalars(select(Position).order_by(Position.id)).all()
     pos_map = {p.id: p for p in positions}  # 编号 → 岗位对象，后面按编号快速查
-    positions_block = _positions_block(positions, extras)  # 把附加条件一并注入给 AI
+
+    # 指定岗位模式：只把这一个岗位给 AI
+    fixed_position: Position | None = None
+    if pos_id is not None:
+        fixed_position = pos_map.get(pos_id)
+        if fixed_position is None:
+            raise ValueError(f"指定的岗位不存在（编号 {pos_id}）")
+        positions_for_ai = [fixed_position]
+    else:
+        positions_for_ai = positions
+
+    positions_block = prompt_svc.positions_block(positions_for_ai, extras)  # 附加条件一并注入给 AI
 
     # ---- 第 1 步：抠文字，每份简历变成一个 IntakeItem ----
     items: list[IntakeItem] = []
@@ -265,7 +263,7 @@ async def run_intake(
 
     # 只有 status 还是 pending 的（成功抠出文字的）才需要问 AI
     pending = [it for it in items if it.status == "pending"]
-    if pending and not positions:
+    if pending and not positions_for_ai:
         # 系统里一个岗位都没有，问 AI 也白问
         for it in pending:
             it.status, it.message = "no_position", "系统内暂无岗位，无法匹配，未建档"
@@ -275,7 +273,12 @@ async def run_intake(
         # ---- 第 2 步：并发问 AI ----
         # asyncio.gather：把好几个「等 AI 回话」的任务一起启动，全部结束后再往下走
         sem = asyncio.Semaphore(CONCURRENCY)
-        await asyncio.gather(*(_screen_one(i, it, configs, positions_block, sem) for i, it in enumerate(pending)))
+        await asyncio.gather(
+            *(
+                _screen_one(i, it, configs, positions_block, fixed_position, user_rules, pos_map, sem)
+                for i, it in enumerate(pending)
+            )
+        )
 
         # ---- 第 3 步：顺序写库 ----
         now = datetime.now()
@@ -283,7 +286,7 @@ async def run_intake(
             if it.status != "pending":
                 continue  # 第 2 步已经标记 error 的跳过
             try:
-                _persist(db, it, pos_map, now)
+                _persist(db, it, now)
             except Exception as e:  # 单条落库异常不影响其他条目
                 db.rollback()  # 把这一条没确认的改动全撤掉，数据库回到干净状态
                 it.status, it.message = "error", f"写入数据库失败：{e.__class__.__name__}"

@@ -30,9 +30,13 @@ class MockLLM(BaseHTTPRequestHandler):
             # 如果岗位带 extra（附加条件），模拟 AI「因不满足附加条件而判 fail」，便于验证功能
             has_extra = '"extra"' in pos_text
             if "FAILME" in resume:
-                result, reason = "fail", "【mock】简历与岗位要求差距较大，不建议继续"
+                # 故意用中文「淘汰」回答，验证系统的答案归一化容错
+                result, reason = "淘汰", "【mock】简历与岗位要求差距较大，不建议继续"
             elif has_extra:
-                result, reason = "fail", "【mock】该岗位设有附加条件，候选人不满足，故淘汰"
+                result, reason = "不合格", "【mock】该岗位设有附加条件，候选人不满足，故淘汰"
+            elif "ENGRESULT" in resume:
+                # 故意用中文「通过」+ 布尔风格，验证归一化
+                result, reason = "通过", "【mock】中文化回答，用于验证系统能读懂"
             else:
                 result, reason = "pass", "【mock】简历与岗位要求基本吻合，建议进入下一环节"
             out = {"name": name, "position_id": pos_ids[0] if pos_ids else None, "result": result, "reason": reason}

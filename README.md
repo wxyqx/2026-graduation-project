@@ -55,7 +55,7 @@ backend/app/
   core/       config（.env）、database（engine/session）、deps（get_current_user）
   models/     5 张表 ORM，字段照 crebas.sql
   schemas/    Pydantic 请求/响应
-  routers/    auth / positions / candidates / applications / ai_configs / ai_screen / stats / export
+  routers/    auth / positions / candidates / applications / ai_configs / ai_screen / settings / stats / export
   services/   security（bcrypt+JWT）、state_machine（8 阶段推进/撤回）、pdf、llm、ai_screen（录入编排）、export、views
 ```
 
@@ -63,6 +63,9 @@ backend/app/
 - 枚举值照数据字典；`contact` 阶段在表里没有结果/时间字段，只作为流程节点
 - 撤回：已淘汰/已录用 → 清当前阶段结果、原地恢复进行中；进行中 → 退回上一阶段并清上一阶段结果；指定 `toStage` → 清该阶段及之后全部数据
 - AI 录入不保存 PDF 与简历文本，只写 `ai_result` / `ai_comment`；同名视为同一候选人
+- AI 录入的岗位可在弹窗整批指定（默认「自动识别」）；指定后 AI 只判断是否符合该岗位
+- AI 筛选提示词：规则可自定义（存 App_Setting 表，按用户隔离），回答格式由系统锁定不可改
+- AI 回答解析容错：result 兼容中英文/布尔/数字写法，position_id 兼容 "1"/"1.0"/"岗位1" 等
 - 删除候选人 = 级联删除其名下投递（应用层实现）；岗位有投递时仍拒删（外键 restrict）
 
 ## 前端结构
@@ -86,5 +89,6 @@ frontend/src/
 - [x] M1 环境 + 项目骨架
 - [x] M2 后端：认证 + CRUD + 状态机 + AI 录入 + 统计/导出（2026-09-08）
 - [x] M3 前端骨架：登录/注册 + 路由守卫 + 左菜单 + 顶部状态栏 + 三档主题 + 岗位/候选人/投递/详情页（2026-09-09）
-- [x] M4 前端功能：汇总导出页、系统设置（AI 配置管理）、AI 录入简历弹窗、导出下载（2026-09-09）
+- [x] M4 前端功能：汇总导出页、系统设置（AI 配置管理 + AI 筛选提示词）、AI 录入简历弹窗（岗位手选）、导出下载（2026-09-09）
+- [x] 后续增强：候选人级联删除、表格样式、筛选记忆、一键启停脚本、AI 岗位手选与提示词、回答容错（2026-09-15）
 - [ ] M5 收尾打包

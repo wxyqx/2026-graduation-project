@@ -45,13 +45,21 @@ export const statsApi = {
 }
 
 // ---- AI 录入简历 ----
-// files: 浏览器 File 对象数组（PDF）；texts: 粘贴的纯文本数组；extras: 各岗位的附加条件 {"岗位id": "文字"}
-export async function uploadIntake(files, texts, extras = {}) {
+// files: 浏览器 File 对象数组（PDF）；texts: 粘贴的纯文本数组
+// extras: 各岗位的附加条件 {"岗位id": "文字"}；posId: 指定岗位编号（不传=AI 自动识别）
+export async function uploadIntake(files, texts, extras = {}, posId = null) {
   const fd = new FormData()
   for (const f of files) fd.append('files', f)
   for (const t of texts) fd.append('texts', t)
   if (extras && Object.keys(extras).length) fd.append('extras', JSON.stringify(extras))
+  if (posId) fd.append('pos_id', String(posId))
   return http.post('/ai-screen/intake', fd, { timeout: 180000 }) // AI 可能想得慢，多等一会
+}
+
+// ---- AI 筛选提示词（系统设置）----
+export const promptApi = {
+  get: () => http.get('/settings/ai-prompt'),
+  save: (rules) => http.put('/settings/ai-prompt', { rules }),
 }
 
 // ---- AI 接口配置 ----
