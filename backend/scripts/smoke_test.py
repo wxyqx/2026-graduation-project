@@ -245,6 +245,43 @@ def run():
     check(mrows[-1][0] == "总计" and mrows[-1][-1] == d["grand_total"], "矩阵末行为总计且与接口一致")
     check(c.post("/api/export", headers=H, json={"mode": "bad"}).status_code == 400, "非法 mode 400")
 
+    print("== 进行中的候选人所处阶段 清单 ==")
+    d = c.get("/api/stats/in-progress", headers=H, params={"range": "week"}).json()
+    check("groups" in d and "total" in d, "in-progress 返回结构")
+    check(d["range_label"] == "本周", "in-progress 默认本周")
+    flat = [x for g in d["groups"] for x in g["candidates"]]
+    check(d["total"] == len(flat), "total 与明细条数一致")
+    for rng in ("last_week", "month", "all"):
+        check(c.get("/api/stats/in-progress", headers=H, params={"range": rng}).status_code == 200, f"in-progress range={rng} 正常")
+    check(c.get("/api/stats/in-progress", headers=H, params={"range": "custom", "start_date": "2026-09-20", "end_date": "2026-09-01"}).status_code == 400, "in-progress 日期颠倒 400")
+
+    print("== 阶段文案手动改写 ==")
+    d = c.get("/api/stats/in-progress", headers=H, params={"range": "all"}).json()
+    flat = [x for g in d["groups"] for x in g["candidates"]]
+    if flat:
+        target = flat[0]
+        r = c.put("/api/settings/stage-note", headers=H, json={"app_id": target["app_id"], "note": "待offer回传"}).json()
+        check(r["notes"].get(str(target["app_id"])) == "待offer回传", "保存手动文案")
+        d2 = c.get("/api/stats/in-progress", headers=H, params={"range": "all"}).json()
+        row = [x for g in d2["groups"] for x in g["candidates"] if x["app_id"] == target["app_id"]][0]
+        check(row["stage_text"] == "待offer回传" and row["is_custom"] is True, "清单显示手动文案并标 is_custom")
+        check(row["auto_text"] != "待offer回传", "同时返回自动文案供恢复")
+        c.put("/api/settings/stage-note", headers=H, json={"app_id": target["app_id"], "note": ""})
+        d3 = c.get("/api/stats/in-progress", headers=H, params={"range": "all"}).json()
+        row3 = [x for g in d3["groups"] for x in g["candidates"] if x["app_id"] == target["app_id"]][0]
+        check(row3["is_custom"] is False and row3["stage_text"] == row3["auto_text"], "传空恢复自动")
+
+    print("== 导出招聘周报（两个工作表）==")
+    r = c.post("/api/export", headers=H, json={"mode": "report", "range": "week", "format": "xlsx"})
+    check(r.status_code == 200 and "spreadsheetml" in r.headers["content-type"], "导出 report xlsx")
+    wb = load_workbook(io.BytesIO(r.content))
+    check(wb.sheetnames == ["阶段岗位汇总", "进行中候选人"], f"两个工作表：{wb.sheetnames}")
+    check(list(wb["阶段岗位汇总"].iter_rows(values_only=True))[0][0] == "阶段", "表1=阶段岗位汇总")
+    check([x.value for x in wb["进行中候选人"][1]] == ["岗位", "候选人", "阶段"], "表2 表头 岗位/候选人/阶段")
+    r = c.post("/api/export", headers=H, json={"mode": "report", "range": "week", "format": "csv"})
+    check(r.status_code == 200 and "csv" in r.headers["content-type"], "report+csv 退化为单表")
+
+
     print(f"\n全部通过：{passed} 项断言")
 
 

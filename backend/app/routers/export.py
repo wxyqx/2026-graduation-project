@@ -15,8 +15,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.models import User
 from app.schemas.export import ExportIn
 from app.services import export as svc
+from app.services import settings as settings_svc
 from app.services import summary
 from app.services.state_machine import STAGES, STATUSES
 
@@ -49,7 +51,7 @@ def export_fields():
 
 
 @router.post("")
-def export(body: ExportIn, db: Session = Depends(get_db)):
+def export(body: ExportIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """导出投递记录为 Excel / csv 文件
 
 **干什么用**：把系统里的投递记录导成表格，发给领导、存档、或用 Excel 做进一步分析。
@@ -76,10 +78,37 @@ def export(body: ExportIn, db: Session = Depends(get_db)):
     if fmt not in ("xlsx", "csv"):
         raise HTTPException(status_code=400, detail="format 只能是 xlsx 或 csv")
     mode = (body.mode or "records").lower()
-    if mode not in ("records", "matrix"):
-        raise HTTPException(status_code=400, detail="mode 只能是 records 或 matrix")
+    if mode not in ("records", "matrix", "report"):
+        raise HTTPException(status_code=400, detail="mode 只能是 records、matrix 或 report")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # 文件名里带时间，多次导出不会覆盖
+
+    # ---- 模式三：招聘周报（两个工作表：阶段岗位汇总 + 进行中候选人）----
+    if mode == "report":
+        if body.range == "custom" and body.filters.start_date and body.filters.end_date \
+                and body.filters.start_date > body.filters.end_date:
+            raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+        start, end, range_label = summary.resolve_range(body.range, body.filters.start_date, body.filters.end_date)
+        matrix = summary.build_matrix(db, start, end)
+        progress = summary.build_in_progress(db, start, end, settings_svc.get_stage_notes(db, user.id))
+        mh, mr = summary.matrix_to_table(matrix)
+        ph, pr = summary.in_progress_to_table(progress)
+        if fmt == "csv":
+            # csv 一个文件只能装一张表，这里退化为只导第一张（阶段岗位汇总）
+            content = svc.to_csv(mh, mr)
+            media = "text/csv; charset=utf-8"
+        else:
+            content = svc.to_xlsx_sheets([("阶段岗位汇总", mh, mr), ("进行中候选人", ph, pr)])
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = f"招聘周报_{range_label}_{stamp}.{fmt}"
+        return Response(
+            content=content,
+            media_type=media,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+                "X-Row-Count": str(len(mr) + len(pr)),
+            },
+        )
 
     # ---- 模式二：导出「阶段 × 岗位」交叉汇总表（周报那种表）----
     if mode == "matrix":

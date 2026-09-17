@@ -44,6 +44,14 @@ export const statsApi = {
   overview: () => http.get('/stats/overview'),
   // 阶段 × 岗位 交叉汇总表；params 例：{range:'week'} 或 {range:'custom', start_date, end_date}
   matrix: (params) => http.get('/stats/matrix', { params }),
+  // 进行中的候选人所处阶段清单
+  inProgress: (params) => http.get('/stats/in-progress', { params }),
+}
+
+// ---- 系统设置（阶段文案改写）----
+export const settingsApi = {
+  // note 传空 = 恢复自动生成
+  saveStageNote: (appId, note) => http.put('/settings/stage-note', { app_id: appId, note }),
 }
 
 // ---- AI 录入简历 ----

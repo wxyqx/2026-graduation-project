@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import User
 from app.services import prompt as prompt_svc
+from app.services import settings as settings_svc
 from app.services.settings import get_setting, set_setting
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -75,3 +76,32 @@ def save_ai_prompt(body: AiPromptIn, db: Session = Depends(get_db), user: User =
         default_rules=prompt_svc.DEFAULT_RULES,
         format_rules=prompt_svc.FORMAT_RULES,
     )
+
+
+class StageNoteIn(BaseModel):
+    """保存手动改写的阶段文案。"""
+
+    app_id: int = Field(description="投递编号（清单里每行的 app_id）")
+    note: str | None = Field(default=None, max_length=50, description="你写的阶段文案，如「待offer回传」「待入职 1.11」。传空 = 恢复自动生成")
+
+
+class StageNoteOut(BaseModel):
+    """返回保存后的全部手动文案映射（键是投递编号的字符串）。"""
+
+    notes: dict[str, str] = Field(description="当前所有手动改写的阶段文案，形如 {\"82\": \"待offer回传\"}")
+
+
+@router.put("/stage-note", response_model=StageNoteOut)
+def save_stage_note(body: StageNoteIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """手动改写某条投递的「阶段」文案（周报清单里那一列）
+
+**干什么用**：系统只能自动说「待笔试/待专业面/待终面」这些。想写系统没有的说法（比如「待offer回传」「待入职 1.11」）时用它。
+
+**怎么填**：
+- `app_id`：清单里那一行的投递编号
+- `note`：你想显示的文字；**传空字符串 = 恢复到系统自动生成**
+
+**存在哪**：存进 App_Setting 表（键 stage_notes，一段 JSON），按登录用户隔离，不改任何表结构、不影响投递本身的数据。
+"""
+    notes = settings_svc.set_stage_note(db, user.id, body.app_id, body.note)
+    return StageNoteOut(notes=notes)

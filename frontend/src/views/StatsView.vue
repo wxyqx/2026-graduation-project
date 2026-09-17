@@ -8,7 +8,7 @@
 import { ElMessage } from 'element-plus'
 import { computed, inject, onMounted, reactive, ref } from 'vue'
 
-import { exportFields, exportFile, positionApi, statsApi } from '../api'
+import { exportFields, exportFile, positionApi, settingsApi, statsApi } from '../api'
 import { STAGES, STAGE_LABEL, STATUSES } from '../constants'
 import { downloadBlob } from '../utils/download'
 
@@ -58,20 +58,101 @@ const matrix = ref(null)
 const matrixLoading = ref(false)
 const exportingMatrix = ref(false)
 
+// 时间范围参数（交叉表和进行中清单共用）
+function rangeParams() {
+  const params = { range: matrixRange.range }
+  if (matrixRange.range === 'custom') {
+    if (matrixRange.start_date) params.start_date = matrixRange.start_date
+    if (matrixRange.end_date) params.end_date = matrixRange.end_date
+  }
+  return params
+}
+
 async function loadMatrix() {
   matrixLoading.value = true
   try {
-    const params = { range: matrixRange.range }
-    if (matrixRange.range === 'custom') {
-      if (matrixRange.start_date) params.start_date = matrixRange.start_date
-      if (matrixRange.end_date) params.end_date = matrixRange.end_date
-    }
-    matrix.value = await statsApi.matrix(params)
+    matrix.value = await statsApi.matrix(rangeParams())
   } finally {
     matrixLoading.value = false
   }
 }
-onMounted(loadMatrix)
+
+// 范围一变：两块表一起刷新（联动）
+function reloadAll() {
+  loadMatrix()
+  loadProgress()
+}
+
+// ---- 进行中的候选人所处阶段（周报第二张表）----
+const progress = ref(null)
+const progressLoading = ref(false)
+const editingAppId = ref(null) // 正在编辑阶段的那一行
+// 把分组拍平成表格行（岗位每行都显示，与截图一致）
+const progressRows = computed(() => {
+  const out = []
+  for (const g of progress.value?.groups || []) {
+    for (const c of g.candidates) {
+      out.push({ ...c, position_label: g.position_label })
+    }
+  }
+  return out
+})
+const editingText = ref('')
+const savingNote = ref(false)
+const exportingReport = ref(false)
+
+async function loadProgress() {
+  progressLoading.value = true
+  try {
+    progress.value = await statsApi.inProgress(rangeParams())
+  } finally {
+    progressLoading.value = false
+  }
+}
+
+// 点某行的「阶段」→ 进入编辑
+function startEdit(row) {
+  editingAppId.value = row.app_id
+  editingText.value = row.stage_text
+}
+function cancelEdit() {
+  editingAppId.value = null
+  editingText.value = ''
+}
+// 保存手动文案（传空 = 恢复自动）
+async function saveNote(appId, text) {
+  savingNote.value = true
+  try {
+    await settingsApi.saveStageNote(appId, text)
+    ElMessage.success(text ? '阶段文案已保存' : '已恢复自动生成')
+    cancelEdit()
+    await loadProgress()
+  } finally {
+    savingNote.value = false
+  }
+}
+
+// 导出完整周报（两个工作表）
+async function exportReport() {
+  exportingReport.value = true
+  try {
+    const filters = {}
+    if (matrixRange.range === 'custom') {
+      filters.start_date = matrixRange.start_date || null
+      filters.end_date = matrixRange.end_date || null
+    }
+    const { blob, filename, rowCount } = await exportFile(filters, [], 'xlsx', 'report', matrixRange.range)
+    downloadBlob(blob, filename)
+    ElMessage.success(`已导出招聘周报（${rowCount} 行）`)
+  } finally {
+    exportingReport.value = false
+  }
+}
+
+onMounted(() => {
+  loadMatrix()
+  loadProgress()
+})
 
 // 导出这张交叉表
 async function exportMatrix() {
@@ -211,13 +292,13 @@ async function doExport() {
         <div class="card-header">
           <span>阶段 × 岗位汇总</span>
           <div class="matrix-tools">
-            <el-radio-group v-model="matrixRange.range" size="small" @change="loadMatrix">
+            <el-radio-group v-model="matrixRange.range" size="small" @change="reloadAll">
               <el-radio-button v-for="r in RANGES" :key="r.value" :value="r.value">{{ r.label }}</el-radio-button>
             </el-radio-group>
             <template v-if="matrixRange.range === 'custom'">
-              <el-date-picker v-model="matrixRange.start_date" type="date" placeholder="开始" value-format="YYYY-MM-DD" size="small" style="width: 130px" @change="loadMatrix" />
+              <el-date-picker v-model="matrixRange.start_date" type="date" placeholder="开始" value-format="YYYY-MM-DD" size="small" style="width: 130px" @change="reloadAll" />
               <span>至</span>
-              <el-date-picker v-model="matrixRange.end_date" type="date" placeholder="结束" value-format="YYYY-MM-DD" size="small" style="width: 130px" @change="loadMatrix" />
+              <el-date-picker v-model="matrixRange.end_date" type="date" placeholder="结束" value-format="YYYY-MM-DD" size="small" style="width: 130px" @change="reloadAll" />
             </template>
             <el-button type="primary" size="small" :loading="exportingMatrix" @click="exportMatrix">
               <el-icon><Download /></el-icon>&nbsp;导出这张表
@@ -257,6 +338,60 @@ async function doExport() {
         <span v-for="(n, i) in matrix.col_totals" :key="i" class="mt-cell">{{ n }}</span>
         <span class="mt-cell mt-grand">{{ matrix.grand_total }}</span>
       </div>
+    </el-card>
+
+    <!-- 进行中的候选人所处阶段 -->
+    <el-card shadow="never" style="margin-top: 14px">
+      <template #header>
+        <div class="card-header">
+          <span>{{ matrix?.range_label || '本周' }}进行中的候选人所处阶段</span>
+          <div class="matrix-tools">
+            <span class="muted">共 {{ progress?.total || 0 }} 人</span>
+            <el-button type="primary" size="small" :loading="exportingReport" @click="exportReport">
+              <el-icon><Download /></el-icon>&nbsp;导出周报（两个表）
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <div class="matrix-hint">
+        时间范围与上方交叉表一致。阶段可点开改写（如「待offer回传」「待入职 1.11」），改过的显示「手动」标记。
+      </div>
+
+      <el-table :data="progressRows" v-loading="progressLoading" size="small" border empty-text="该时间段内没有进行中的候选人">
+        <el-table-column label="岗位" width="220">
+          <template #default="{ row }">{{ row.position_label }}</template>
+        </el-table-column>
+        <el-table-column label="候选人" width="140">
+          <template #default="{ row }">{{ row.name }}</template>
+        </el-table-column>
+        <el-table-column label="阶段" min-width="200">
+          <template #default="{ row }">
+            <!-- 编辑中：输入框 -->
+            <template v-if="editingAppId === row.app_id">
+              <el-input
+                v-model="editingText"
+                size="small"
+                maxlength="50"
+                placeholder="例：待offer回传"
+                style="width: 260px"
+                @keyup.enter="saveNote(row.app_id, editingText)"
+              >
+                <template #append>
+                  <el-button :loading="savingNote" @click="saveNote(row.app_id, editingText)">存</el-button>
+                </template>
+              </el-input>
+              <el-button link size="small" @click="cancelEdit">取消</el-button>
+            </template>
+            <!-- 非编辑：文案 + 手动标记 -->
+            <template v-else>
+              <span class="stage-text" @click="startEdit(row)">{{ row.stage_text }}</span>
+              <el-tag v-if="row.is_custom" size="small" type="warning" effect="plain" style="margin-left: 6px">手动</el-tag>
+              <el-button v-if="row.is_custom" link size="small" type="info" @click="saveNote(row.app_id, '')">恢复自动</el-button>
+            </template>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <!-- 导出面板 -->
@@ -413,6 +548,14 @@ async function doExport() {
 }
 .zero {
   color: var(--el-text-color-placeholder);
+}
+/* 阶段文案：可点，鼠标变成手型 */
+.stage-text {
+  cursor: pointer;
+  border-bottom: 1px dashed var(--el-border-color);
+}
+.stage-text:hover {
+  color: var(--el-color-primary);
 }
 .matrix-total-row {
   display: flex;

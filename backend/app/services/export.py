@@ -120,3 +120,27 @@ def to_csv(headers: list[str], rows: list[list]) -> bytes:
     for r in rows:
         w.writerow(["" if v is None else v for v in r])  # 空值写成空字符串，而不是 "None"
     return buf.getvalue().encode("utf-8-sig")
+
+
+def to_xlsx_sheets(sheets: list[tuple[str, list[str], list[list]]]) -> bytes:
+    """生成含多个工作表的 Excel。
+
+    sheets：[(工作表名, 表头, 数据行), ...]
+    用于「招聘周报」：第一张放阶段岗位汇总，第二张放进行中候选人清单。
+    """
+    wb = Workbook()
+    # 用第一张替换掉默认的空表
+    for idx, (name, headers, rows) in enumerate(sheets):
+        ws = wb.active if idx == 0 else wb.create_sheet()
+        ws.title = (name or f"表{idx + 1}")[:31]  # 工作表名上限 31 字符
+        ws.append(headers)
+        for r in rows:
+            ws.append(r)
+        # 自动列宽（中文按 1.6 倍估算）
+        for i, h in enumerate(headers, start=1):
+            width = max([len(str(h))] + [len(str(r[i - 1])) for r in rows if r[i - 1] is not None] or [8])
+            ws.column_dimensions[get_column_letter(i)].width = min(max(width * 1.6, 10), 60)
+        ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models import Application, Position
+from app.models import Application, Position, User
+from app.services import settings as settings_svc
 from app.services import summary
 from app.services.state_machine import STAGE_LABELS, STAGES
 
@@ -187,6 +188,51 @@ def matrix(
         raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
     start, end, label = summary.resolve_range(range, start_date, end_date)
     data = summary.build_matrix(db, start, end)
+    return {
+        "range": range if range in summary.RANGE_LABELS else "all",
+        "range_label": label,
+        "start": start,
+        "end": end,
+        **data,
+    }
+
+
+@router.get("/in-progress")
+def in_progress(
+    range: str = Query(default="week", description="时间范围：week 本周（默认）/ last_week 上周 / month 本月 / all 全部 / custom 自定义"),
+    start_date: date | None = Query(default=None, description="自定义范围的开始日期（仅 range=custom 时用）"),
+    end_date: date | None = Query(default=None, description="自定义范围的结束日期（仅 range=custom 时用）"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """进行中的候选人所处阶段清单（周报第二张表）
+
+**干什么用**：列出「还在推进中」的候选人，按岗位分组，看每个人现在卡在哪一步。前端「汇总导出」页下半部分那张表就是它。
+
+**筛选口径**：
+- 只看**进行中**（还没淘汰也没录用）的投递；
+- 且在所选时间范围内**有动作**（创建时间或最后更新时间落在范围内）——「以前投的、这周才面到下一关」的人也会出现在本周里。
+
+**阶段文案**：按当前阶段自动生成（待AI筛选/待简历筛选/待联系候选人/待电话沟通/待笔试/待专业面/待HR面/待终面）；已淘汰→「已淘汰」、已录用→「已录用」。你可以对某一条手动改写成自己的说法（如「待offer回传」「待入职 1.11」），用 PUT /api/settings/stage-note 保存；改过的行 `is_custom` 为 true。
+
+**返回什么**：
+```json
+{
+  "range": "week", "range_label": "本周",
+  "start": "2026-09-14T00:00:00", "end": "2026-09-17T23:59:59",
+  "groups": [
+    {"position_id": 1, "position_label": "C++客户端(初级)—朱力伟", "position_name": "C++客户端开发工程师（初级）", "owner": "朱力伟",
+     "candidates": [{"app_id": 81, "candidate_id": 77, "name": "高辉圳", "stage_key": "final", "stage_text": "待终面", "auto_text": "待终面", "is_custom": false, "update_time": "..."}]}
+  ],
+  "total": 12
+}
+```
+"""
+    if range == "custom" and start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+    start, end, label = summary.resolve_range(range, start_date, end_date)
+    notes = settings_svc.get_stage_notes(db, user.id)
+    data = summary.build_in_progress(db, start, end, notes)
     return {
         "range": range if range in summary.RANGE_LABELS else "all",
         "range_label": label,

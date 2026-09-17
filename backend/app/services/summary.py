@@ -227,3 +227,126 @@ def matrix_to_table(matrix: dict) -> tuple[list[str], list[list]]:
         rows.append([r["label"]] + list(r["cells"]) + [r["total"]])
     rows.append(["总计"] + list(matrix["col_totals"]) + [matrix["grand_total"]])
     return headers, rows
+
+
+# ======================================================================
+# 四、本周进行中的候选人所处阶段（周报里的第二张表）
+# ======================================================================
+
+# 各阶段自动生成的文案：站在「候选人现在处于什么状态」的角度说
+AUTO_STAGE_TEXT = {
+    "ai": "待AI筛选",
+    "resume": "待简历筛选",
+    "contact": "待联系候选人",
+    "phone": "待电话沟通",
+    "test": "待笔试",
+    "pro": "待专业面",
+    "hr": "待HR面",
+    "final": "待终面",
+}
+
+
+def auto_stage_text(app: Application) -> str:
+    """按投递的当前状态自动生成一句「所处阶段」文案。
+
+    进行中 → 「待X」（如 待笔试）
+    已淘汰 → 「已淘汰」；已录用 → 「已录用」
+    认不出的阶段 → 原样返回阶段代号，免得显示空白
+    """
+    if app.overall_status == "fail":
+        return "已淘汰"
+    if app.overall_status == "pass":
+        return "已录用"
+    stage = app.current_stage or ""
+    return AUTO_STAGE_TEXT.get(stage, stage or "—")
+
+
+def build_in_progress(
+    db: Session,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    notes: dict[str, str] | None = None,
+) -> dict:
+    """算出「进行中的候选人所处阶段」清单，按岗位分组。
+
+    只收两类人：
+      · overall_status == 'pending'（还在推进的）
+      · 且在时间范围内「有动作」——创建时间或最后更新时间落在范围内
+        （只看创建时间会漏掉「以前投的、这周才面到下一关」的人，所以两个时间都要看）
+
+    notes：手动改写的阶段文案，形如 {"82": "待offer回传"}（键是投递编号的字符串）。
+           命中就用你写的，并在返回里标 is_custom=True。
+    """
+    notes = notes or {}
+    positions = db.scalars(select(Position).order_by(Position.id)).all()
+    cols = position_columns(positions)
+    col_by_id = {c.id: c for c in cols}
+
+    apps = db.scalars(select(Application)).all()
+
+    # 按岗位编号归组
+    grouped: dict[int, list[dict]] = {}
+    for app in apps:
+        if app.overall_status != "pending":
+            continue  # 只看进行中的
+        if not _moved_within(app, start, end):
+            continue
+        col = col_by_id.get(app.pos_id)
+        if col is None:
+            continue  # 岗位已不存在（理论上不会有），跳过
+        note = (notes.get(str(app.id)) or "").strip()
+        row = {
+            "app_id": app.id,
+            "candidate_id": app.can_id,
+            "name": app.candidate.name if app.candidate else "",
+            "stage_key": app.current_stage,
+            "stage_text": note or auto_stage_text(app),
+            "auto_text": auto_stage_text(app),  # 自动文案，供前端「恢复自动」用
+            "is_custom": bool(note),
+            "update_time": app.update_time,
+        }
+        grouped.setdefault(app.pos_id, []).append(row)
+
+    groups = []
+    for c in cols:
+        rows = grouped.get(c.id)
+        if not rows:
+            continue  # 这个岗位本周没有人，不显示空组
+        rows.sort(key=lambda r: (r["name"] or "", r["app_id"]))
+        groups.append(
+            {
+                "position_id": c.id,
+                "position_label": c.label,
+                "position_name": c.name,
+                "owner": c.owner,
+                "candidates": rows,
+            }
+        )
+
+    total = sum(len(g["candidates"]) for g in groups)
+    return {"groups": groups, "total": total}
+
+
+def _moved_within(app: Application, start: datetime | None, end: datetime | None) -> bool:
+    """这个人在这段时间里「有动作」吗？（创建时间或更新时间任一落在范围内）"""
+    if start is None and end is None:
+        return True  # 全部范围，不筛时间
+    for t in (app.create_time, app.update_time):
+        if t is None:
+            continue
+        if start is not None and t < start:
+            continue
+        if end is not None and t > end:
+            continue
+        return True
+    return False
+
+
+def in_progress_to_table(data: dict) -> tuple[list[str], list[list]]:
+    """把清单转成「表头 + 数据行」，供导出用（岗位 / 候选人 / 阶段）。"""
+    headers = ["岗位", "候选人", "阶段"]
+    rows = []
+    for g in data["groups"]:
+        for c in g["candidates"]:
+            rows.append([g["position_label"], c["name"], c["stage_text"]])
+    return headers, rows

@@ -35,3 +35,38 @@ def set_setting(db: Session, user_id: int, key: str, value: str | None) -> None:
     else:
         db.add(AppSetting(user_id=user_id, setting_key=key, setting_value=text, update_time=datetime.now()))
     db.commit()
+
+
+# ---------- 阶段文案的手动改写（存成一条 JSON 设置）----------
+
+import json
+
+STAGE_NOTES_KEY = "stage_notes"
+
+
+def get_stage_notes(db: Session, user_id: int) -> dict[str, str]:
+    """取手动改写的阶段文案，形如 {"82": "待offer回传"}。没有或格式坏了都返回空字典。"""
+    raw = get_setting(db, user_id, STAGE_NOTES_KEY)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items() if str(v).strip()}
+    except (ValueError, TypeError):
+        pass
+    return {}
+
+
+def set_stage_note(db: Session, user_id: int, app_id: int, note: str | None) -> dict[str, str]:
+    """保存某条投递的手动阶段文案；note 传空 = 恢复自动（从记录里删掉）。返回保存后的全量映射。"""
+    notes = get_stage_notes(db, user_id)
+    key = str(app_id)
+    text = (note or "").strip()
+    if text:
+        notes[key] = text
+    else:
+        notes.pop(key, None)
+    # 全空就把整条设置删掉，保持干净
+    set_setting(db, user_id, STAGE_NOTES_KEY, json.dumps(notes, ensure_ascii=False) if notes else "")
+    return notes
