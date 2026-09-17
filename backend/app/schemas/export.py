@@ -21,9 +21,20 @@ class ExportIn(BaseModel):
     filters: ExportFilters = Field(default_factory=ExportFilters, description="筛选条件，不传 = 全部")
     fields: list[str] = Field(
         default_factory=list,
-        description="想导出哪几列，填列的英文名（先调 GET /api/export/fields 看有哪些）。空列表 = 全部 21 列都导",
+        description="想导出哪几列，填列的英文名（先调 GET /api/export/fields 看有哪些）。空列表 = 全部 21 列都导。mode=matrix 时本字段忽略",
     )
     format: str = Field(default="xlsx", description="文件格式：xlsx（Excel，推荐）或 csv")
+    mode: str = Field(
+        default="records",
+        description=(
+            "导出内容：records=逐条投递记录（默认）；"
+            "matrix=「阶段 × 岗位」交叉汇总表（周报那种表，行=阶段、列=岗位+总计）"
+        ),
+    )
+    range: str = Field(
+        default="week",
+        description="仅 mode=matrix 时使用：week 本周 / last_week 上周 / month 本月 / all 全部 / custom 自定义（自定义用 filters 里的 start_date、end_date）",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -32,8 +43,9 @@ class ExportIn(BaseModel):
                     "filters": {"status": "pending"},
                     "fields": ["id", "candidate_name", "position_name", "current_stage", "overall_status"],
                     "format": "xlsx",
+                    "mode": "records",
                 },
-                {"filters": {}, "fields": [], "format": "csv"},
+                {"mode": "matrix", "range": "week", "format": "xlsx"},
             ]
         }
     }

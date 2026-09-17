@@ -8,15 +8,16 @@
 
 全部是「数数」——用数据库的 count 和 group by（分组计数）来做，不把数据都读出来再数（那样慢）。
 """
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import Application, Position
+from app.services import summary
 from app.services.state_machine import STAGE_LABELS, STAGES
 
 router = APIRouter(prefix="/api/stats", tags=["stats"], dependencies=[Depends(get_current_user)])
@@ -139,4 +140,57 @@ def overview(db: Session = Depends(get_db)):
         "month_hired": month_hired,
         "stage_counts": stage_counts,
         "by_position": list(by_position.values()),
+    }
+
+
+@router.get("/matrix")
+def matrix(
+    range: str = Query(default="week", description="时间范围：week=本周（默认）/ last_week=上周 / month=本月 / all=全部 / custom=自定义（需配 start_date、end_date）"),
+    start_date: date | None = Query(default=None, description="自定义范围的开始日期（仅 range=custom 时用），格式 2026-09-01"),
+    end_date: date | None = Query(default=None, description="自定义范围的结束日期（仅 range=custom 时用），格式 2026-09-30"),
+    db: Session = Depends(get_db),
+):
+    """阶段 × 岗位 交叉汇总表（周报那种表）
+
+**干什么用**：一眼看清「本周各岗位分别走到哪一步了」。前端「汇总导出」页的那张交叉表就是它。
+
+**表格长什么样**：
+- 每一行是一个阶段：简历筛选数 / 电话沟通人数 / 笔试人数 / 面试人数（面试 = 专业面 + HR面 + 终面，同一个人只算一次）
+- 每一列是一个在招岗位（岗位名长，自动缩写成短标签；若两个岗位缩写后重名，自动补负责人区分）
+- 最后一列是「总计」，最后一行也是「总计」
+
+**格子里的数字**：在所选时间范围内**到达**过这一关的人数（按该关的时间戳算）。
+
+**怎么填**：`range` 可选
+- `week` 本周（默认，从本周一 0 点起）
+- `last_week` 上周（上周一到本周一之间）
+- `month` 本月（本月 1 号起）
+- `all` 全部（不按时间筛，即历史累计）
+- `custom` 自定义，配合 `start_date` / `end_date`（含当天）
+
+**返回什么**：
+```json
+{
+  "range": "week",
+  "range_label": "本周",
+  "start": "2026-09-14T00:00:00",
+  "end": "2026-09-17T23:59:59.999999",
+  "positions": [{"id": 10, "name": "web前端开发工程师（中级）", "label": "web前端(中级)", "owner": "胡倞"}],
+  "rows": [{"key": "resume", "label": "简历筛选数", "cells": [3, 1, 0], "total": 4}],
+  "col_totals": [4, 2, 0],
+  "row_totals": [4],
+  "grand_total": 6
+}
+```
+"""
+    if range == "custom" and start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+    start, end, label = summary.resolve_range(range, start_date, end_date)
+    data = summary.build_matrix(db, start, end)
+    return {
+        "range": range if range in summary.RANGE_LABELS else "all",
+        "range_label": label,
+        "start": start,
+        "end": end,
+        **data,
     }

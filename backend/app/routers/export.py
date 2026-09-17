@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.schemas.export import ExportIn
 from app.services import export as svc
+from app.services import summary
 from app.services.state_machine import STAGES, STATUSES
 
 router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(get_current_user)])
@@ -71,6 +72,40 @@ def export(body: ExportIn, db: Session = Depends(get_db)):
 **小知识**：csv 用的是 utf-8-sig 编码（开头带一个隐形标记），这样用 Excel 直接打开中文不会乱码。
 """
     # ---- 检查参数 ----
+    fmt = body.format.lower()
+    if fmt not in ("xlsx", "csv"):
+        raise HTTPException(status_code=400, detail="format 只能是 xlsx 或 csv")
+    mode = (body.mode or "records").lower()
+    if mode not in ("records", "matrix"):
+        raise HTTPException(status_code=400, detail="mode 只能是 records 或 matrix")
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # 文件名里带时间，多次导出不会覆盖
+
+    # ---- 模式二：导出「阶段 × 岗位」交叉汇总表（周报那种表）----
+    if mode == "matrix":
+        if body.range == "custom" and body.filters.start_date and body.filters.end_date \
+                and body.filters.start_date > body.filters.end_date:
+            raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+        start, end, range_label = summary.resolve_range(body.range, body.filters.start_date, body.filters.end_date)
+        matrix = summary.build_matrix(db, start, end)
+        headers, rows = summary.matrix_to_table(matrix)
+        if fmt == "xlsx":
+            content = svc.to_xlsx(headers, rows, title="阶段岗位汇总")
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            content = svc.to_csv(headers, rows)
+            media = "text/csv; charset=utf-8"
+        filename = f"阶段岗位汇总_{range_label}_{stamp}.{fmt}"
+        return Response(
+            content=content,
+            media_type=media,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+                "X-Row-Count": str(len(rows)),
+            },
+        )
+
+    # ---- 模式一（默认）：逐条投递记录 ----
     fields = body.fields or list(svc.EXPORT_FIELDS)  # 没勾选 = 全部列
     unknown = [k for k in fields if k not in svc.EXPORT_FIELDS]  # 有没有乱传的列名
     if unknown:
@@ -79,14 +114,10 @@ def export(body: ExportIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="stage 不是合法阶段值")
     if body.filters.status and body.filters.status not in STATUSES:
         raise HTTPException(status_code=400, detail="status 不是合法状态值")
-    fmt = body.format.lower()
-    if fmt not in ("xlsx", "csv"):
-        raise HTTPException(status_code=400, detail="format 只能是 xlsx 或 csv")
 
     # ---- 查数据、整理成表、生成文件 ----
     apps = svc.query_applications(db, body.filters)
     headers, rows = svc.build_rows(apps, fields)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # 文件名里带时间，多次导出不会覆盖
     if fmt == "xlsx":
         content = svc.to_xlsx(headers, rows)
         media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"  # Excel 文件的「类型标签」

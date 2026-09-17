@@ -226,6 +226,25 @@ def run():
     check(r.status_code == 400, "不存在的 pos_id 400")
     check(c.post("/api/ai-screen/intake", headers=H).status_code == 400, "intake 空请求 400")
 
+    print("== 阶段 × 岗位 交叉汇总表 ==")
+    d = c.get("/api/stats/matrix", headers=H, params={"range": "week"}).json()
+    check(d["range"] == "week" and d["range_label"] == "本周", "matrix 默认本周")
+    check(len(d["rows"]) == 4 and [r["label"] for r in d["rows"]] == ["简历筛选数", "电话沟通人数", "笔试人数", "面试人数"], "matrix 4 行且顺序正确")
+    check(len(d["positions"]) == len(d["col_totals"]) and len(d["col_totals"]) == len(d["rows"][0]["cells"]), "列数一致")
+    check(d["grand_total"] == sum(d["col_totals"]) == sum(d["row_totals"]), "总计自洽（列合计=行合计=总和）")
+    check(any(p["label"] and p["id"] for p in d["positions"]), "岗位列含 label 与 id")
+    for rng in ("last_week", "month", "all"):
+        check(c.get("/api/stats/matrix", headers=H, params={"range": rng}).status_code == 200, f"range={rng} 正常")
+    check(c.get("/api/stats/matrix", headers=H, params={"range": "custom", "start_date": "2026-09-01", "end_date": "2026-09-17"}).status_code == 200, "自定义范围正常")
+    check(c.get("/api/stats/matrix", headers=H, params={"range": "custom", "start_date": "2026-09-20", "end_date": "2026-09-01"}).status_code == 400, "起止日期颠倒 400")
+    r = c.post("/api/export", headers=H, json={"mode": "matrix", "range": "week", "format": "xlsx"})
+    check(r.status_code == 200 and "spreadsheetml" in r.headers["content-type"], "导出矩阵 xlsx")
+    ws = load_workbook(io.BytesIO(r.content)).active
+    mrows = list(ws.iter_rows(values_only=True))
+    check(mrows[0][0] == "阶段" and mrows[0][-1] == "总计", "矩阵表头 阶段…总计")
+    check(mrows[-1][0] == "总计" and mrows[-1][-1] == d["grand_total"], "矩阵末行为总计且与接口一致")
+    check(c.post("/api/export", headers=H, json={"mode": "bad"}).status_code == 400, "非法 mode 400")
+
     print(f"\n全部通过：{passed} 项断言")
 
 

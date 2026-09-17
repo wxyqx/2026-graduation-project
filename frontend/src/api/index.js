@@ -42,6 +42,8 @@ export const applicationApi = {
 // ---- 统计 ----
 export const statsApi = {
   overview: () => http.get('/stats/overview'),
+  // 阶段 × 岗位 交叉汇总表；params 例：{range:'week'} 或 {range:'custom', start_date, end_date}
+  matrix: (params) => http.get('/stats/matrix', { params }),
 }
 
 // ---- AI 录入简历 ----
@@ -77,8 +79,9 @@ export const exportFields = () => http.get('/export/fields')
 
 // 导出文件：后端返回的不是 JSON 而是文件字节，所以要特殊处理
 // 返回 { blob, filename, rowCount }；导出失败时抛错（拦截器会弹中文提示）
-export async function exportFile(filters, fields, format) {
-  const resp = await http.post('/export', { filters, fields, format }, { responseType: 'blob', silent: false })
+// mode: 'records' 逐条记录（默认）；'matrix' 阶段×岗位交叉汇总表
+export async function exportFile(filters, fields, format, mode = 'records', range = 'week') {
+  const resp = await http.post('/export', { filters, fields, format, mode, range }, { responseType: 'blob', silent: false })
   // 此时 resp 是完整的 axios 响应（blob 没走成功拦截器的 data 提取，保持原样）
   const cd = resp.headers['content-disposition'] || ''
   // 后端用 filename*=UTF-8''投递记录_xxx.xlsx 的形式给文件名，这里解析出来

@@ -45,6 +45,51 @@ function stagePct(count) {
   return Math.round((count / maxStageCount.value) * 100)
 }
 
+// ---- 阶段 × 岗位 交叉汇总表（周报那种表）----
+const RANGES = [
+  { value: 'week', label: '本周' },
+  { value: 'last_week', label: '上周' },
+  { value: 'month', label: '本月' },
+  { value: 'all', label: '全部' },
+  { value: 'custom', label: '自定义' },
+]
+const matrixRange = reactive({ range: 'week', start_date: null, end_date: null })
+const matrix = ref(null)
+const matrixLoading = ref(false)
+const exportingMatrix = ref(false)
+
+async function loadMatrix() {
+  matrixLoading.value = true
+  try {
+    const params = { range: matrixRange.range }
+    if (matrixRange.range === 'custom') {
+      if (matrixRange.start_date) params.start_date = matrixRange.start_date
+      if (matrixRange.end_date) params.end_date = matrixRange.end_date
+    }
+    matrix.value = await statsApi.matrix(params)
+  } finally {
+    matrixLoading.value = false
+  }
+}
+onMounted(loadMatrix)
+
+// 导出这张交叉表
+async function exportMatrix() {
+  exportingMatrix.value = true
+  try {
+    const filters = {}
+    if (matrixRange.range === 'custom') {
+      filters.start_date = matrixRange.start_date || null
+      filters.end_date = matrixRange.end_date || null
+    }
+    const { blob, filename, rowCount } = await exportFile(filters, [], 'xlsx', 'matrix', matrixRange.range)
+    downloadBlob(blob, filename)
+    ElMessage.success(`已导出交叉汇总表（${rowCount} 行）`)
+  } finally {
+    exportingMatrix.value = false
+  }
+}
+
 // ---- 导出 ----
 const positions = ref([])
 const fieldDefs = ref([]) // 后端给的全字段 [{key,label}]
@@ -159,6 +204,60 @@ async function doExport() {
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- 阶段 × 岗位 交叉汇总表 -->
+    <el-card shadow="never" style="margin-top: 14px">
+      <template #header>
+        <div class="card-header">
+          <span>阶段 × 岗位汇总</span>
+          <div class="matrix-tools">
+            <el-radio-group v-model="matrixRange.range" size="small" @change="loadMatrix">
+              <el-radio-button v-for="r in RANGES" :key="r.value" :value="r.value">{{ r.label }}</el-radio-button>
+            </el-radio-group>
+            <template v-if="matrixRange.range === 'custom'">
+              <el-date-picker v-model="matrixRange.start_date" type="date" placeholder="开始" value-format="YYYY-MM-DD" size="small" style="width: 130px" @change="loadMatrix" />
+              <span>至</span>
+              <el-date-picker v-model="matrixRange.end_date" type="date" placeholder="结束" value-format="YYYY-MM-DD" size="small" style="width: 130px" @change="loadMatrix" />
+            </template>
+            <el-button type="primary" size="small" :loading="exportingMatrix" @click="exportMatrix">
+              <el-icon><Download /></el-icon>&nbsp;导出这张表
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <div class="matrix-hint">
+        数字 = 所选时间范围内<b>到达</b>过这一关的人数（面试含专业面/HR面/终面，同一人只计一次）。
+      </div>
+
+      <el-table :data="matrix?.rows || []" v-loading="matrixLoading" size="small" border empty-text="暂无数据">
+        <el-table-column label="阶段" width="130" fixed>
+          <template #default="{ row }">{{ row.label }}</template>
+        </el-table-column>
+        <el-table-column
+          v-for="(p, i) in matrix?.positions || []"
+          :key="p.id"
+          :label="p.label"
+          width="118"
+          align="center"
+        >
+          <template #default="{ row }">
+            <span v-if="row.cells[i] > 0">{{ row.cells[i] }}</span>
+            <span v-else class="zero">–</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="总计" width="80" align="center" fixed="right">
+          <template #default="{ row }"><b>{{ row.total }}</b></template>
+        </el-table-column>
+      </el-table>
+
+      <!-- 底部总计行 -->
+      <div v-if="matrix?.positions?.length" class="matrix-total-row">
+        <span class="mt-label">总计</span>
+        <span v-for="(n, i) in matrix.col_totals" :key="i" class="mt-cell">{{ n }}</span>
+        <span class="mt-cell mt-grand">{{ matrix.grand_total }}</span>
+      </div>
+    </el-card>
 
     <!-- 导出面板 -->
     <el-card shadow="never" style="margin-top: 14px">
@@ -295,6 +394,48 @@ async function doExport() {
 .muted {
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+/* 阶段 × 岗位汇总 */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.matrix-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.matrix-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 10px;
+}
+.zero {
+  color: var(--el-text-color-placeholder);
+}
+.matrix-total-row {
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border-top: 1px dashed var(--el-border-color);
+  padding-top: 8px;
+}
+.mt-label {
+  width: 130px;
+  flex: none;
+  padding-left: 8px;
+}
+.mt-cell {
+  width: 118px;
+  flex: none;
+  text-align: center;
+}
+.mt-grand {
+  width: 80px;
+  color: var(--el-color-primary);
 }
 .tip {
   margin-left: 12px;

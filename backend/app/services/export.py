@@ -91,11 +91,14 @@ def build_rows(apps: list[Application], fields: list[str]) -> tuple[list[str], l
     return headers, rows
 
 
-def to_xlsx(headers: list[str], rows: list[list]) -> bytes:
-    """生成 Excel 文件，返回文件的字节（不落盘，直接发给浏览器下载）。"""
+def to_xlsx(headers: list[str], rows: list[list], title: str = "投递记录") -> bytes:
+    """生成 Excel 文件，返回文件的字节（不落盘，直接发给浏览器下载）。
+
+    title：工作表标签名。导出交叉表时会传「阶段岗位汇总」。
+    """
     wb = Workbook()  # 新建一个工作簿
     ws = wb.active  # 拿到默认的第一张工作表
-    ws.title = "投递记录"
+    ws.title = title[:31]  # 工作表名最多 31 个字符
     ws.append(headers)  # 第一行写表头
     for r in rows:
         ws.append(r)  # 之后每行写一条

@@ -53,13 +53,13 @@ npm run dev
 ```
 backend/app/
   core/       config（.env）、database（engine/session）、deps（get_current_user）
-  models/     5 张表 ORM，字段照 crebas.sql
+  models/     6 张表 ORM，字段照 crebas.sql
   schemas/    Pydantic 请求/响应
   routers/    auth / positions / candidates / applications / ai_configs / ai_screen / settings / stats / export
-  services/   security（bcrypt+JWT）、state_machine（8 阶段推进/撤回）、pdf、llm、ai_screen（录入编排）、export、views
+  services/   security（bcrypt+JWT）、state_machine（8 阶段推进/撤回）、pdf、llm、prompt（提示词与回答容错）、ai_screen（录入编排）、summary（阶段×岗位交叉表）、export、views、settings
 ```
 
-约定（详见设计文档 v3.1）：
+约定（详见设计文档 v3.5）：
 - 枚举值照数据字典；`contact` 阶段在表里没有结果/时间字段，只作为流程节点
 - 撤回：已淘汰/已录用 → 清当前阶段结果、原地恢复进行中；进行中 → 退回上一阶段并清上一阶段结果；指定 `toStage` → 清该阶段及之后全部数据
 - AI 录入不保存 PDF 与简历文本，只写 `ai_result` / `ai_comment`；同名视为同一候选人
@@ -67,6 +67,7 @@ backend/app/
 - AI 筛选提示词：规则可自定义（存 App_Setting 表，按用户隔离），回答格式由系统锁定不可改
 - AI 回答解析容错：result 兼容中英文/布尔/数字写法，position_id 兼容 "1"/"1.0"/"岗位1" 等
 - 删除候选人 = 级联删除其名下投递（应用层实现）；岗位有投递时仍拒删（外键 restrict）
+- 汇总导出页的「阶段×岗位汇总」：行=简历筛选/电话沟通/笔试/面试，列=各岗位+总计，格子=所选时间范围内到达该关人数；岗位名自动缩写、同名岗位补负责人；范围可切本周/上周/本月/全部/自定义；可一键导出 Excel
 
 ## 前端结构
 
