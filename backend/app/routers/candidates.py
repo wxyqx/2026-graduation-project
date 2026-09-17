@@ -28,8 +28,12 @@ def _out(c: Candidate, count: int = 0) -> CandidateOut:
 
 
 def _count_map(db: Session) -> dict[int, int]:
-    """一次查出「每个候选人名下有几条投递」，返回 {候选人编号: 数量}。"""
-    rows = db.execute(select(Application.can_id, func.count()).group_by(Application.can_id)).all()
+    """一次查出「每个候选人名下有几条投递」，返回 {候选人编号: 数量}。暂不招岗位的投递不计入。"""
+    from app.services import positions as positions_svc
+
+    stmt = select(Application.can_id, func.count()).group_by(Application.can_id)
+    stmt = positions_svc.exclude_hidden_apps(stmt, db)
+    rows = db.execute(stmt).all()
     return {can_id: n for can_id, n in rows}
 
 
@@ -107,7 +111,11 @@ def get_candidate(can_id: Annotated[int, Path(description="候选人编号")], d
 - 404：没有这个编号的候选人
 """
     c = _get_or_404(db, can_id)
-    count = db.scalar(select(func.count()).select_from(Application).where(Application.can_id == can_id)) or 0
+    from app.services import positions as positions_svc
+    stmt = positions_svc.exclude_hidden_apps(
+        select(func.count()).select_from(Application).where(Application.can_id == can_id), db
+    )
+    count = db.scalar(stmt) or 0
     return _out(c, count)
 
 

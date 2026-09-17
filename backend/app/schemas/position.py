@@ -14,6 +14,7 @@ class PositionIn(BaseModel):
         max_length=2000,
         description="岗位要求 / 职位描述（JD）。AI 筛简历就是拿简历跟这段话比，写得越具体 AI 判断越准，最多 2000 字",
     )
+    is_hidden: bool = Field(default=False, description="暂不招（隐藏）：true=该岗位及其名下投递不在统计、下拉与列表中体现")
 
     model_config = {
         "json_schema_extra": {
@@ -36,6 +37,7 @@ class PositionOut(BaseModel):
     owner: str | None = Field(description="负责人")
     position_requirements: str | None = Field(description="岗位要求")
     application_count: int = Field(default=0, description="这个岗位已经收到多少条投递。大于 0 的岗位不能删")
+    is_hidden: bool = Field(default=False, description="是否已设为暂不招（隐藏）")
 
 
 class PositionUpdate(BaseModel):
@@ -44,5 +46,6 @@ class PositionUpdate(BaseModel):
     position_name: str | None = Field(default=None, min_length=1, max_length=100, description="新的岗位名称，不改就别传")
     owner: str | None = Field(default=None, max_length=100, description="新的负责人，不改就别传")
     position_requirements: str | None = Field(default=None, max_length=2000, description="新的岗位要求，不改就别传")
+    is_hidden: bool | None = Field(default=None, description="设为暂不招(true)或恢复在招(false)，不改就别传")
 
     model_config = {"json_schema_extra": {"examples": [{"owner": "李HR"}]}}

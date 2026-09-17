@@ -14,7 +14,8 @@ export const authApi = {
 
 // ---- 岗位 ----
 export const positionApi = {
-  list: () => http.get('/positions'),
+  // includeHidden=true 时连「暂不招」的岗位一起返回（岗位管理页用）；默认只返回在招的
+  list: (includeHidden = false) => http.get('/positions', { params: includeHidden ? { include_hidden: true } : {} }),
   create: (data) => http.post('/positions', data),
   update: (id, data) => http.put(`/positions/${id}`, data),
   remove: (id) => http.delete(`/positions/${id}`),

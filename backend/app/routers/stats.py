@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import Application, Position, User
+from app.services import positions as positions_svc
 from app.services import settings as settings_svc
 from app.services import summary
 from app.services.state_machine import STAGE_LABELS, STAGES
@@ -70,10 +71,16 @@ def overview(db: Session = Depends(get_db)):
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)  # 本月 1 号 0 点
 
     # ---- 岗位总数 ----
-    position_count = db.scalar(select(func.count()).select_from(Position)) or 0  # or 0：万一是 None 就当 0
+    hidden = positions_svc.hidden_ids(db)
+    position_count = db.scalar(select(func.count()).select_from(Position).where(Position.is_hidden == 0)) or 0  # or 0：万一是 None 就当 0
+
+    # 除岗位数以外的所有统计都只看「非隐藏岗位」的投递（暂不招岗位的投递不计入）
+    vis = [] if not hidden else [Application.pos_id.notin_(hidden)]
 
     # ---- 按整体状态分组数数：pending 几条、pass 几条、fail 几条 ----
-    status_rows = db.execute(select(Application.overall_status, func.count()).group_by(Application.overall_status)).all()
+    status_rows = db.execute(
+        select(Application.overall_status, func.count()).where(*vis).group_by(Application.overall_status)
+    ).all()
     status_counts = {"pending": 0, "pass": 0, "fail": 0}  # 先全填 0，防止某个状态一条都没有时缺 key
     for s, n in status_rows:
         status_counts[s] = n
@@ -81,7 +88,7 @@ def overview(db: Session = Depends(get_db)):
     # ---- 进行中的投递，按当前关卡分组数数 ----
     stage_rows = db.execute(
         select(Application.current_stage, func.count())
-        .where(Application.overall_status == "pending")
+        .where(Application.overall_status == "pending", *vis)
         .group_by(Application.current_stage)
     ).all()
     stage_map = {s: n for s, n in stage_rows}
@@ -94,12 +101,12 @@ def overview(db: Session = Depends(get_db)):
     month_hired = db.scalar(  # 本月录用：状态 pass 且最后更新在本月
         select(func.count())
         .select_from(Application)
-        .where(Application.overall_status == "pass", Application.update_time >= month_start)
+        .where(Application.overall_status == "pass", Application.update_time >= month_start, *vis)
     ) or 0
     week_in_progress = db.scalar(  # 本周进行：本周新建且还在进行中
         select(func.count())
         .select_from(Application)
-        .where(Application.overall_status == "pending", Application.create_time >= this_week)
+        .where(Application.overall_status == "pending", Application.create_time >= this_week, *vis)
     ) or 0
     last_week_completed = db.scalar(  # 上周完成：上周一到本周一之间结束的（录用或淘汰）
         select(func.count())
@@ -108,14 +115,21 @@ def overview(db: Session = Depends(get_db)):
             Application.overall_status.in_(["pass", "fail"]),
             Application.update_time >= last_week,
             Application.update_time < this_week,
+            *vis,
         )
     ) or 0
 
     # ---- 按岗位分组：每个岗位下 pending / pass / fail 各几条 ----
     # isouter=True（左外连接）：一条投递都没有的岗位也要出现在结果里，不能漏
+    # 额外条件 Position.is_hidden == 0：暂不招的岗位不出现
     by_pos_rows = db.execute(
         select(Position.id, Position.position_name, Application.overall_status, func.count())
-        .join(Application, Application.pos_id == Position.id, isouter=True)
+        .join(
+            Application,
+            (Application.pos_id == Position.id) & (Application.pos_id.notin_(hidden) if hidden else True),
+            isouter=True,
+        )
+        .where(Position.is_hidden == 0)
         .group_by(Position.id, Position.position_name, Application.overall_status)
         .order_by(Position.id)
     ).all()

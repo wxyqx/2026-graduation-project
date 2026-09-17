@@ -8,7 +8,7 @@
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,7 @@ def _out(p: Position, count: int = 0) -> PositionOut:
         owner=p.owner,
         position_requirements=p.position_requirements,
         application_count=count,
+        is_hidden=bool(p.is_hidden),
     )
 
 
@@ -47,7 +48,13 @@ def _get_or_404(db: Session, pos_id: int) -> Position:
 
 
 @router.get("", response_model=list[PositionOut])
-def list_positions(db: Session = Depends(get_db)):
+def list_positions(
+    include_hidden: bool = Query(
+        default=False,
+        description="是否包含「暂不招」的岗位。默认 false=只返回在招岗位（各处下拉用）；岗位管理页传 true 拿全部",
+    ),
+    db: Session = Depends(get_db),
+):
     """岗位列表（带每个岗位收到了几条投递）
 
 **干什么用**：看看现在有哪些岗位在招。前端「岗位管理」页的表格就是它。
@@ -64,7 +71,10 @@ def list_positions(db: Session = Depends(get_db)):
 `application_count` 大于 0 的岗位不能删除。
 """
     counts = _count_map(db)
-    positions = db.scalars(select(Position).order_by(Position.id.desc())).all()  # 按编号倒序，新建的在最上面
+    stmt = select(Position).order_by(Position.id.desc())  # 按编号倒序，新建的在最上面
+    if not include_hidden:
+        stmt = stmt.where(Position.is_hidden == 0)  # 默认不返回「暂不招」的岗位
+    positions = db.scalars(stmt).all()
     return [_out(p, counts.get(p.id, 0)) for p in positions]
 
 

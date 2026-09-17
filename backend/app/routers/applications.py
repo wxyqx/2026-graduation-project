@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import Application, Candidate, Position
 from app.schemas.application import AdvanceIn, ApplicationCreate, RevertIn
+from app.services import positions as positions_svc
 from app.services import state_machine as sm
 from app.services.views import application_detail, application_summary
 
@@ -31,6 +32,9 @@ AppId = Annotated[int, Path(description="投递记录编号（列表里每一行
 def _get_or_404(db: Session, app_id: int) -> Application:
     a = db.get(Application, app_id)
     if a is None:
+        raise HTTPException(status_code=404, detail="投递记录不存在")
+    # 岗位已设为暂不招时，这条投递也当作不存在
+    if positions_svc.is_hidden(db, a.pos_id):
         raise HTTPException(status_code=404, detail="投递记录不存在")
     return a
 
@@ -88,6 +92,7 @@ def list_applications(
         stmt = stmt.where(Application.pos_id == pos_id)
     if can_id:
         stmt = stmt.where(Application.can_id == can_id)
+    stmt = positions_svc.exclude_hidden_apps(stmt, db)  # 暂不招岗位的投递不显示
     return [application_summary(a) for a in db.scalars(stmt).all()]
 
 
@@ -110,8 +115,11 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
     # 先确认「人」和「岗位」都真实存在
     if db.get(Candidate, body.can_id) is None:
         raise HTTPException(status_code=404, detail="候选人不存在")
-    if db.get(Position, body.pos_id) is None:
+    pos = db.get(Position, body.pos_id)
+    if pos is None:
         raise HTTPException(status_code=404, detail="岗位不存在")
+    if pos.is_hidden:
+        raise HTTPException(status_code=400, detail=f"「{pos.position_name}」已设为暂不招，不能建投递")
     # 再查重：同一个人投同一个岗位只能有一条
     dup = db.scalar(
         select(Application).where(Application.can_id == body.can_id, Application.pos_id == body.pos_id)

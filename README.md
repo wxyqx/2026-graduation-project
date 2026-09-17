@@ -56,7 +56,7 @@ backend/app/
   models/     6 张表 ORM，字段照 crebas.sql
   schemas/    Pydantic 请求/响应
   routers/    auth / positions / candidates / applications / ai_configs / ai_screen / settings / stats / export
-  services/   security（bcrypt+JWT）、state_machine（8 阶段推进/撤回）、pdf、llm、prompt（提示词与回答容错）、ai_screen（录入编排）、summary（阶段×岗位交叉表）、export、views、settings
+  services/   security（bcrypt+JWT）、state_machine（8 阶段推进/撤回）、pdf、llm、prompt（提示词与回答容错）、ai_screen（录入编排）、summary（阶段×岗位交叉表）、positions（暂不招岗位统一排除）、export、views、settings
 ```
 
 约定（详见设计文档 v3.5）：
@@ -71,6 +71,7 @@ backend/app/
 - 汇总导出页的「进行中的候选人所处阶段」：列出范围内有动作且仍进行中的人（岗位/候选人/阶段），**支持按阶段多选筛选**，阶段自动生成且可逐条手动改写（存 App_Setting，不改业务数据），范围与交叉表联动
 - 导出「招聘周报」= 一个 Excel 两个工作表（阶段岗位汇总 + 进行中候选人）
 - 候选人管理页：搜索栏（姓名/备注/投递情况组合筛选）+ 点姓名或详情打开抽屉查看其名下全部投递（可跳投递详情）
+- 岗位「暂不招」：岗位管理页行内开关一键隐藏；隐藏后该岗位及其全部投递从统计、下拉、列表、AI 筛选与导出中彻底不体现（数据保留，改回即恢复）；services/positions.py 是统一排除出口
 
 ## 前端结构
 
@@ -96,4 +97,5 @@ frontend/src/
 - [x] M4 前端功能：汇总导出页、系统设置（AI 配置管理 + AI 筛选提示词）、AI 录入简历弹窗（岗位手选）、导出下载（2026-09-09）
 - [x] 后续增强：候选人级联删除、表格样式、筛选记忆、一键启停脚本、AI 岗位手选与提示词、回答容错（2026-09-15）
 - [x] 周报增强：阶段×岗位交叉汇总表（口径=通过该关或正停在该关，格子可点看名单）、进行中候选人所处阶段清单（阶段多选筛选+手动改写）、招聘周报双表导出、候选人搜索与详情（2026-09-17）
+- [x] 岗位「暂不招」隐藏：行内开关 + 显示筛选，隐藏后岗位及其投递从统计/列表/AI/导出彻底排除（2026-09-17）
 - [ ] M5 收尾打包

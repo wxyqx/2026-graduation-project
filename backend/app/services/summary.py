@@ -222,7 +222,8 @@ def build_matrix(
     start/end 为 None 表示「全部时间」，不按时间筛。
     返回：{positions, rows, col_totals, grand_total, row_totals}
     """
-    positions = db.scalars(select(Position).order_by(Position.id)).all()
+    # 暂不招的岗位不生成列
+    positions = db.scalars(select(Position).where(Position.is_hidden == 0).order_by(Position.id)).all()
     cols = position_columns(positions)
     pos_index = {c.id: i for i, c in enumerate(cols)}  # 岗位编号 → 第几列
 
@@ -277,8 +278,8 @@ def matrix_cell_people(
 
     notes = notes or {}
     position = db.get(Position, pos_id)
-    if position is None:
-        raise ValueError("岗位不存在")
+    if position is None or position.is_hidden:
+        raise ValueError("岗位不存在（或已设为暂不招）")
 
     pos_cols = position_columns([position])
     label = pos_cols[0].label
@@ -374,7 +375,8 @@ def build_in_progress(
     stages：只保留当前阶段在这些阶段里的人（如 ["test","pro"]）；不传 = 全部阶段。
     """
     notes = notes or {}
-    positions = db.scalars(select(Position).order_by(Position.id)).all()
+    # 暂不招的岗位不出现
+    positions = db.scalars(select(Position).where(Position.is_hidden == 0).order_by(Position.id)).all()
     cols = position_columns(positions)
     col_by_id = {c.id: c for c in cols}
 

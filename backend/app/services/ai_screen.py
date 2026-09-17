@@ -225,7 +225,8 @@ async def run_intake(
     user_rules：用户在设置页写的筛选规则；不传 = 用内置默认规则。
     """
     # 准备岗位清单（AI 要从里面选，或者只用指定的那一个）
-    positions = db.scalars(select(Position).order_by(Position.id)).all()
+    # 暂不招的岗位不给 AI 看，也不允许指定
+    positions = db.scalars(select(Position).where(Position.is_hidden == 0).order_by(Position.id)).all()
     pos_map = {p.id: p for p in positions}  # 编号 → 岗位对象，后面按编号快速查
 
     # 指定岗位模式：只把这一个岗位给 AI
@@ -233,7 +234,7 @@ async def run_intake(
     if pos_id is not None:
         fixed_position = pos_map.get(pos_id)
         if fixed_position is None:
-            raise ValueError(f"指定的岗位不存在（编号 {pos_id}）")
+            raise ValueError(f"指定的岗位不存在或已设为暂不招（编号 {pos_id}）")
         positions_for_ai = [fixed_position]
     else:
         positions_for_ai = positions

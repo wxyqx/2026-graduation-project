@@ -50,7 +50,10 @@ RESULT_LABELS = {"pass": "通过", "fail": "淘汰"}
 
 def query_applications(db: Session, f: ExportFilters) -> list[Application]:
     """按筛选条件查投递。没填的条件就不加限制。"""
+    from app.services import positions as positions_svc
+
     stmt = select(Application).order_by(Application.id)
+    stmt = positions_svc.exclude_hidden_apps(stmt, db)  # 暂不招岗位的投递不导出
     if f.start_date:
         # 开始日期那天的 0 点起
         stmt = stmt.where(Application.create_time >= datetime.combine(f.start_date, time.min))

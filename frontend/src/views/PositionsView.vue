@@ -12,18 +12,36 @@ import { positionExtras } from '../stores/positionExtras'
 
 const refreshStats = inject('refreshStats')
 
-const list = ref([])
+const all = ref([]) // 全部岗位（含暂不招）
+const list = ref([]) // 按筛选显示出来的
 const loading = ref(false)
+const hiddenFilter = ref('') // '' = 全部 / 'no' = 只在招 / 'yes' = 只暂不招
+
+function applyFilter() {
+  if (hiddenFilter.value === 'no') list.value = all.value.filter((p) => !p.is_hidden)
+  else if (hiddenFilter.value === 'yes') list.value = all.value.filter((p) => p.is_hidden)
+  else list.value = all.value
+}
 
 async function load() {
   loading.value = true
   try {
-    list.value = await positionApi.list()
+    all.value = await positionApi.list(true) // 管理页要连隐藏的一起拿
+    applyFilter()
   } finally {
     loading.value = false
   }
 }
 onMounted(load)
+
+// 切换「招 / 暂不招」：点一下即时生效
+async function toggleHidden(row) {
+  const next = !row.is_hidden
+  await positionApi.update(row.id, { is_hidden: next })
+  ElMessage.success(next ? `「${row.position_name}」已设为暂不招，相关数据不再体现` : `「${row.position_name}」已恢复在招`)
+  await load()
+  refreshStats?.()
+}
 
 // ---- 新建 / 编辑弹窗 ----
 const dialogVisible = ref(false)
@@ -97,19 +115,45 @@ async function remove(row) {
   <div>
     <div class="page-header">
       <h2>岗位管理</h2>
-      <el-button type="primary" @click="openCreate">
-        <el-icon><Plus /></el-icon>&nbsp;新建岗位
-      </el-button>
+      <div class="header-tools">
+        <span class="muted">显示</span>
+        <el-select v-model="hiddenFilter" size="default" style="width: 130px" @change="applyFilter">
+          <el-option label="全部岗位" value="" />
+          <el-option label="只在招" value="no" />
+          <el-option label="只暂不招" value="yes" />
+        </el-select>
+        <el-button type="primary" @click="openCreate">
+          <el-icon><Plus /></el-icon>&nbsp;新建岗位
+        </el-button>
+      </div>
     </div>
 
     <el-card shadow="never">
-      <el-table :data="list" v-loading="loading" border empty-text="还没有岗位，点右上角新建一个">
-        <el-table-column prop="position_name" label="岗位名称" min-width="180">
+      <el-table
+        :data="list"
+        v-loading="loading"
+        border
+        :row-class-name="({ row }) => (row.is_hidden ? 'row-hidden' : '')"
+        empty-text="还没有岗位，点右上角新建一个"
+      >
+        <el-table-column prop="position_name" label="岗位名称" min-width="200">
           <template #default="{ row }">
             {{ row.position_name }}
+            <el-tag v-if="row.is_hidden" size="small" type="info" effect="dark" style="margin-left: 6px">已隐藏</el-tag>
             <el-tag v-if="positionExtras.has(row.id)" size="small" type="warning" effect="plain" style="margin-left: 6px">
               AI附加条件
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="招聘状态" width="110" align="center">
+          <template #default="{ row }">
+            <el-switch
+              :model-value="!row.is_hidden"
+              active-text="招"
+              inactive-text="暂不招"
+              inline-prompt
+              @change="toggleHidden(row)"
+            />
           </template>
         </el-table-column>
         <el-table-column prop="owner" label="负责人" width="120">
@@ -192,6 +236,20 @@ async function remove(row) {
   min-height: 360px;
   max-width: 96vw;
   max-height: 90vh;
+}
+/* 暂不招的岗位整行置灰 */
+:deep(.row-hidden) {
+  color: var(--el-text-color-placeholder);
+  background: var(--el-fill-color-light);
+}
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.muted {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 .extra-hint {
   font-size: 12px;
