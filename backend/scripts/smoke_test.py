@@ -86,6 +86,10 @@ def run():
     c2 = r.json()["id"]; created["candidates"].append(c2)
     names = [x["name"] for x in c.get("/api/candidates", headers=H, params={"name": f"张三_{STAMP}"}).json()]
     check(names == [f"张三_{STAMP}"], "姓名模糊查询")
+    check(len(c.get("/api/candidates", headers=H, params={"remark": "内推"}).json()) >= 1, "备注模糊查询")
+    check(len(c.get("/api/candidates", headers=H, params={"name": f"张三_{STAMP}", "remark": "内推"}).json()) == 1, "姓名+备注组合筛选")
+    check(all(x["application_count"] >= 0 for x in c.get("/api/candidates", headers=H, params={"has_application": "yes"}).json()), "按有无投递筛选(有)")
+    check(c.get("/api/candidates", headers=H, params={"has_application": "no"}).status_code == 200, "按有无投递筛选(无)")
     check(c.put(f"/api/candidates/{c1}", headers=H, json={"remark": "改备注"}).json()["remark"] == "改备注", "更新备注")
 
     print("== applications + 状态机")
@@ -101,6 +105,8 @@ def run():
     lst = c.get("/api/applications", headers=H, params={"pos_id": p1}).json()
     check([x["id"] for x in lst] == [a1] and lst[0]["candidate_name"] == f"张三_{STAMP}", "按岗位筛选 + 带候选人名")
     check(c.get("/api/applications", headers=H, params={"stage": "xxx"}).status_code == 400, "非法 stage 400")
+    by_can = c.get("/api/applications", headers=H, params={"can_id": c1}).json()
+    check(by_can == [] or all(x["can_id"] == c1 for x in by_can), "按候选人编号筛选投递")
     check(c.get("/api/applications", headers=H, params={"status": "pending"}).status_code == 200, "按状态筛选")
 
     # 两个小快捷函数：adv = 推进某一关，rev = 撤回。lambda 是「一行写完的小函数」

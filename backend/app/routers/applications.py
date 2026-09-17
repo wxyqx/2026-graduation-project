@@ -45,6 +45,7 @@ def list_applications(
         default=None, alias="status", description="只看这个状态的：pending=进行中 / pass=已录用 / fail=已淘汰"
     ),  # 网址里叫 status，但 status 这个名字已经被上面 import 的模块占了，所以 Python 里叫 status_
     pos_id: int | None = Query(default=None, description="只看这个岗位的（岗位编号）"),
+    can_id: int | None = Query(default=None, description="只看这个候选人的（候选人编号）。用于候选人详情里列他投了哪些岗位"),
     db: Session = Depends(get_db),
 ):
     """投递列表（可按关卡 / 状态 / 岗位筛选）
@@ -85,6 +86,8 @@ def list_applications(
         stmt = stmt.where(Application.overall_status == status_)
     if pos_id:
         stmt = stmt.where(Application.pos_id == pos_id)
+    if can_id:
+        stmt = stmt.where(Application.can_id == can_id)
     return [application_summary(a) for a in db.scalars(stmt).all()]
 
 

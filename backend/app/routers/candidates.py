@@ -43,24 +43,38 @@ def _get_or_404(db: Session, can_id: int) -> Candidate:
 @router.get("", response_model=list[CandidateOut])
 def list_candidates(
     name: str | None = Query(default=None, description="姓名关键字，模糊搜索。传「张」能搜到张三、小张；不传 = 全部"),
+    remark: str | None = Query(default=None, description="备注关键字，模糊搜索。例：内推 / 二批 / AI录入"),
+    has_application: str | None = Query(
+        default=None,
+        description="按有没有投递筛选：yes=只看有投递的；no=只看还没投递的；不传=全部",
+    ),
     db: Session = Depends(get_db),
 ):
-    """候选人列表（可按姓名搜索）
+    """候选人列表（可按姓名 / 备注 / 有无投递筛选）
 
-**干什么用**：看所有候选人，或者按名字找某个人。
+**干什么用**：前端「候选人管理」页的表格与搜索栏。
 
-**怎么填**：`name` 可不填。填了就是「名字里含这几个字」的模糊搜索。
+**怎么填**（都可组合，是「且」的关系）：
+- `name`：姓名里含这几个字（模糊）
+- `remark`：备注里含这几个字（模糊）
+- `has_application`：`yes` 只看有投递记录的；`no` 只看一条投递都没有的
 
 **返回什么**：数组，最新录入的在前，每个带 `application_count`（名下投递数，删除前会连带删除这些）：
 ```json
 [{"id": 3, "name": "张三", "remark": "内推", "create_time": "2026-09-08T10:00:00", "application_count": 2}]
 ```
 """
-    # Query(default=None)：这个参数写在网址问号后面（?name=张），不传也行
+    # Query(default=None)：这些参数写在网址问号后面（?name=张&remark=内推），不传也行
     stmt = select(Candidate).order_by(Candidate.id.desc())
     if name:
         stmt = stmt.where(Candidate.name.like(f"%{name}%"))  # % 是通配符：「张」能搜到「张三」「小张」
+    if remark:
+        stmt = stmt.where(Candidate.remark.like(f"%{remark}%"))
     counts = _count_map(db)
+    if has_application == "yes":
+        stmt = stmt.where(Candidate.id.in_(select(Application.can_id).distinct()))
+    elif has_application == "no":
+        stmt = stmt.where(Candidate.id.notin_(select(Application.can_id).distinct()))
     return [_out(c, counts.get(c.id, 0)) for c in db.scalars(stmt).all()]
 
 

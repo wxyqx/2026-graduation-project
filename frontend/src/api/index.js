@@ -22,7 +22,8 @@ export const positionApi = {
 
 // ---- 候选人 ----
 export const candidateApi = {
-  list: (name) => http.get('/candidates', { params: name ? { name } : {} }),
+  // 参数可以是字符串（当姓名搜索用）或对象（{name, remark, has_application}）
+  list: (query) => http.get('/candidates', { params: typeof query === 'string' ? (query ? { name: query } : {}) : (query || {}) }),
   create: (data) => http.post('/candidates', data),
   update: (id, data) => http.put(`/candidates/${id}`, data),
   remove: (id) => http.delete(`/candidates/${id}`), // 级联删除：连带删掉他名下的投递
