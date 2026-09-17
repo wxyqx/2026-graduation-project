@@ -15,7 +15,25 @@ import router from '../router'
 import { auth } from '../stores/auth'
 
 // vite.config.js 里把 /api 代理到了后端 8000 端口，所以这里只写 /api
-const http = axios.create({ baseURL: '/api', timeout: 60000 })
+// paramsSerializer：axios 默认把数组参数序列化成 stages[]=a&stages[]=b（带方括号），
+// 而 FastAPI 只认重复键 stages=a&stages=b，所以数组要自己拼（否则后端收不到、筛选失效）。
+function serializeParams(params) {
+  const usp = new URLSearchParams()
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === null || value === undefined || value === '') continue
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        if (v === null || v === undefined || v === '') continue
+        usp.append(key, v)
+      }
+    } else {
+      usp.append(key, value)
+    }
+  }
+  return usp.toString()
+}
+
+const http = axios.create({ baseURL: '/api', timeout: 60000, paramsSerializer: serializeParams })
 
 http.interceptors.request.use((config) => {
   if (auth.token.value) {

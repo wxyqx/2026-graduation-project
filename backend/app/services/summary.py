@@ -13,9 +13,13 @@
      「C++客户端(初级)—朱力伟」 / 「C++客户端(初级)—丘春辉」
   2. build_matrix()：算出每个格子里的人数
 
-格子里的数字是「在指定时间范围内**到达**过这一关的人数」：
-  · 能查时间戳的阶段（简历筛选/电话沟通/笔试/专业面/HR面/终面）→ 看该关的时间戳是否落在范围内
-  · 没有时间戳的阶段（AI筛选、联系候选人）→ 用「当前阶段」的位置推算
+格子里的数字是「在指定时间范围内**通过了这一关** 或 **正停在这一关**的人数」：
+  · 通过了这一关（含已进入下一关的）→ 算；用该关自己的时间戳判断是否落在范围内
+  · 正停在这一关、还没打分 → 算；用 update_time（进入这一关的时间）判断
+  · 在这一关被淘汰 → 不算
+这样既包含「已经过了这关的人」，也包含「正在进行到这关的人」，不会漏人。
+
+面试那一行只判**专业面**：过了专业面就计入（含后来过了 HR 面、终面的人）。
 """
 
 from dataclasses import dataclass
@@ -129,13 +133,13 @@ def resolve_range(
 # 三、交叉表
 # ======================================================================
 
-# 表格的行定义：key（程序用）、label（显示用）、涉及哪些阶段
-# 「面试人数」把 专业面/HR面/终面 三关合并成一行，同一个人只算一次
+# 表格的行定义：key（程序用）、label（显示用）、判定用哪个阶段
+# 「面试人数」只判专业面这一关：过了专业面就计入（含后来过了 HR 面/终面的人）
 ROW_DEFS = [
-    ("resume", "简历筛选数", ("resume",)),
-    ("phone", "电话沟通人数", ("phone",)),
-    ("test", "笔试人数", ("test",)),
-    ("interview", "面试人数", ("pro", "hr", "final")),
+    ("resume", "简历筛选数", "resume"),
+    ("phone", "电话沟通人数", "phone"),
+    ("test", "笔试人数", "test"),
+    ("interview", "面试人数", "pro"),
 ]
 
 # 各阶段的时间戳字段（与 state_machine.STAGE_FIELDS 一致）
@@ -153,15 +157,20 @@ STAGE_TIME_FIELD = {
 STAGE_ORDER = ["ai", "resume", "contact", "phone", "test", "pro", "hr", "final"]
 
 
-def _reached_by_time(app: Application, stage: str, start: datetime | None, end: datetime | None) -> bool:
-    """这个人「在时间范围内到达过某一关」吗？
+RESULT_FIELD = {
+    "ai": "ai_result",
+    "resume": "resume_result",
+    "contact": None,
+    "phone": "phone_result",
+    "test": "test_result",
+    "pro": "pro_result",
+    "hr": "hr_result",
+    "final": "final_result",
+}
 
-    有该关时间戳的：直接看时间戳是否落在范围内。
-    """
-    field = STAGE_TIME_FIELD.get(stage)
-    if not field:
-        return False
-    t = getattr(app, field, None)
+
+def _in_range(t: datetime | None, start: datetime | None, end: datetime | None) -> bool:
+    """这个时间点落在范围内吗？（start/end 为 None 表示不限）"""
     if t is None:
         return False
     if start is not None and t < start:
@@ -171,6 +180,37 @@ def _reached_by_time(app: Application, stage: str, start: datetime | None, end: 
     return True
 
 
+def stage_hit(app: Application, stage: str, start: datetime | None, end: datetime | None) -> tuple[bool, bool]:
+    """判断某个人算不算在「这一关」里。
+
+    返回 (算不算, 是否已通过这一关)：
+      · 已通过这一关（该关 result = pass）→ 算，且 passed=True；用该关时间戳判范围
+      · 正停在这一关还没打分（current_stage=该关、该关无结果、仍进行中）→ 算，passed=False；用 update_time 判范围
+      · 在这一关被淘汰 / 还没走到这一关 → 不算
+    没有结果字段的阶段（contact）只能靠「正停在这一关」判断。
+    """
+    result_field = RESULT_FIELD.get(stage)
+    time_field = STAGE_TIME_FIELD.get(stage)
+    result = getattr(app, result_field, None) if result_field else None
+
+    # 情况一：已经通过了这一关（包括后来走到了更后面的阶段）
+    if result == "pass":
+        if time_field:
+            t = getattr(app, time_field, None)
+            if t is None:
+                # 时间戳缺失（理论上不会有）：只在不限时间时计入
+                return (start is None and end is None), True
+            return _in_range(t, start, end), True
+        return True, True
+
+    # 情况二：正停在这一关、还没打分（进行中）
+    if app.current_stage == stage and result is None and app.overall_status == "pending":
+        return _in_range(app.update_time, start, end), False
+
+    # 其余：在这一关被淘汰，或根本没走到这一关
+    return False, False
+
+
 def build_matrix(
     db: Session,
     start: datetime | None = None,
@@ -178,32 +218,29 @@ def build_matrix(
 ) -> dict:
     """算出整张交叉表。
 
-    start/end 为 None 时表示「全部时间」，不按时间筛。
+    格子口径见 stage_hit()：范围内「通过了这一关」或「正停在这一关」的人数。
+    start/end 为 None 表示「全部时间」，不按时间筛。
     返回：{positions, rows, col_totals, grand_total, row_totals}
     """
     positions = db.scalars(select(Position).order_by(Position.id)).all()
     cols = position_columns(positions)
     pos_index = {c.id: i for i, c in enumerate(cols)}  # 岗位编号 → 第几列
 
-    # 一次把投递都取出来（自用系统数据量小，在内存里算最直观）
     apps = db.scalars(select(Application)).all()
 
-    pos_ids = list(pos_index.keys())
-    # 行 × 列 的计数表
     counts = {row_key: [0] * len(cols) for row_key, _, _ in ROW_DEFS}
 
     for app in apps:
         col = pos_index.get(app.pos_id)
         if col is None:
             continue  # 岗位可能已被删（外键限制下一般不会），跳过更安全
-        for row_key, _label, stages in ROW_DEFS:
-            for st in stages:
-                if _reached_by_time(app, st, start, end):
-                    counts[row_key][col] += 1
-                    break  # 面试行有三关，同一个人只算一次
+        for row_key, _label, stage in ROW_DEFS:
+            hit, _passed = stage_hit(app, stage, start, end)
+            if hit:
+                counts[row_key][col] += 1
 
     rows = []
-    for row_key, label, _stages in ROW_DEFS:
+    for row_key, label, _stage in ROW_DEFS:
         cells = counts[row_key]
         rows.append({"key": row_key, "label": label, "cells": cells, "total": sum(cells)})
 
@@ -216,6 +253,63 @@ def build_matrix(
         "col_totals": col_totals,
         "row_totals": [r["total"] for r in rows],
         "grand_total": grand_total,
+    }
+
+
+def matrix_cell_people(
+    db: Session,
+    row_key: str,
+    pos_id: int,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    notes: dict[str, str] | None = None,
+) -> dict:
+    """列出某个格子里具体是哪些人（点数字时用）。
+
+    返回 {row, row_label, position_id, position_label, count, people:[...]}
+    people 每项：{app_id, candidate_id, name, stage_text, passed, is_custom}
+    passed=True 表示这个人已经通过了这一关（否则是正停在这一关）。
+    """
+    row_def = next((r for r in ROW_DEFS if r[0] == row_key), None)
+    if row_def is None:
+        raise ValueError("row 不是合法的行（可选：resume / phone / test / interview）")
+    _, row_label, stage = row_def
+
+    notes = notes or {}
+    position = db.get(Position, pos_id)
+    if position is None:
+        raise ValueError("岗位不存在")
+
+    pos_cols = position_columns([position])
+    label = pos_cols[0].label
+
+    people = []
+    apps = db.scalars(select(Application).where(Application.pos_id == pos_id)).all()
+    for app in apps:
+        hit, passed = stage_hit(app, stage, start, end)
+        if not hit:
+            continue
+        note = (notes.get(str(app.id)) or "").strip()
+        people.append(
+            {
+                "app_id": app.id,
+                "candidate_id": app.can_id,
+                "name": app.candidate.name if app.candidate else "",
+                "stage_text": note or auto_stage_text(app),
+                "is_custom": bool(note),
+                "passed": passed,
+                "overall_status": app.overall_status,
+                "current_stage": app.current_stage,
+            }
+        )
+    people.sort(key=lambda x: (x["name"] or "", x["app_id"]))
+    return {
+        "row": row_key,
+        "row_label": row_label,
+        "position_id": pos_id,
+        "position_label": label,
+        "count": len(people),
+        "people": people,
     }
 
 
@@ -266,6 +360,7 @@ def build_in_progress(
     start: datetime | None = None,
     end: datetime | None = None,
     notes: dict[str, str] | None = None,
+    stages: list[str] | None = None,
 ) -> dict:
     """算出「进行中的候选人所处阶段」清单，按岗位分组。
 
@@ -274,8 +369,9 @@ def build_in_progress(
       · 且在时间范围内「有动作」——创建时间或最后更新时间落在范围内
         （只看创建时间会漏掉「以前投的、这周才面到下一关」的人，所以两个时间都要看）
 
-    notes：手动改写的阶段文案，形如 {"82": "待offer回传"}（键是投递编号的字符串）。
-           命中就用你写的，并在返回里标 is_custom=True。
+    notes ：手动改写的阶段文案，形如 {"82": "待offer回传"}（键是投递编号的字符串）。
+            命中就用你写的，并在返回里标 is_custom=True。
+    stages：只保留当前阶段在这些阶段里的人（如 ["test","pro"]）；不传 = 全部阶段。
     """
     notes = notes or {}
     positions = db.scalars(select(Position).order_by(Position.id)).all()
@@ -291,6 +387,8 @@ def build_in_progress(
             continue  # 只看进行中的
         if not _moved_within(app, start, end):
             continue
+        if stages and (app.current_stage not in stages):
+            continue  # 用户只勾选了这几个阶段
         col = col_by_id.get(app.pos_id)
         if col is None:
             continue  # 岗位已不存在（理论上不会有），跳过

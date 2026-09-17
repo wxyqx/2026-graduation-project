@@ -261,6 +261,39 @@ def run():
         check(c.get("/api/stats/in-progress", headers=H, params={"range": rng}).status_code == 200, f"in-progress range={rng} 正常")
     check(c.get("/api/stats/in-progress", headers=H, params={"range": "custom", "start_date": "2026-09-20", "end_date": "2026-09-01"}).status_code == 400, "in-progress 日期颠倒 400")
 
+    print("== 交叉表格子名单 / 阶段多选 ==")
+    mc = c.get("/api/stats/matrix", headers=H, params={"range": "all"}).json()
+    # 找一个非零格子，核对名单人数与格子数字一致
+    found = False
+    for r in mc["rows"]:
+        for i, n in enumerate(r["cells"]):
+            if n > 0:
+                pos_id = mc["positions"][i]["id"]
+                cell = c.get("/api/stats/matrix/cell", headers=H,
+                             params={"row": r["key"], "pos_id": pos_id, "range": "all"}).json()
+                check(cell["count"] == n, f"格子名单人数({cell['count']}) == 格子数字({n}) [{r['label']}×{cell['position_label']}]")
+                check(all("passed" in p and "stage_text" in p for p in cell["people"]), "名单每项含 已通过标记/阶段文案")
+                found = True
+                break
+        if found:
+            break
+    check(found, "至少找到一个非零格子")
+    check(c.get("/api/stats/matrix/cell", headers=H, params={"row": "zzz", "pos_id": 1}).status_code == 400, "非法 row 400")
+    check(c.get("/api/stats/matrix/cell", headers=H, params={"row": "test", "pos_id": 999999}).status_code == 400, "岗位不存在 400")
+
+    d_all = c.get("/api/stats/in-progress", headers=H, params={"range": "all"}).json()
+    stage_of = {}
+    for g in d_all["groups"]:
+        for x in g["candidates"]:
+            stage_of[x["app_id"]] = x["stage_key"]
+    if stage_of:
+        one_stage = sorted(set(stage_of.values()))[0]
+        d_one = c.get("/api/stats/in-progress", headers=H, params=[("range", "all"), ("stages", one_stage)]).json()
+        flat_one = [x for g in d_one["groups"] for x in g["candidates"]]
+        check(all(x["stage_key"] == one_stage for x in flat_one), f"stages={one_stage} 只返回该阶段的人")
+        check(d_one["total"] <= d_all["total"], "筛选后人数不多于全部")
+    check(c.get("/api/stats/in-progress", headers=H, params={"range": "all", "stages": "zzz"}).status_code == 400, "非法 stages 400")
+
     print("== 阶段文案手动改写 ==")
     d = c.get("/api/stats/in-progress", headers=H, params={"range": "all"}).json()
     flat = [x for g in d["groups"] for x in g["candidates"]]

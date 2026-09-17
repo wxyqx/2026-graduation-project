@@ -197,11 +197,58 @@ def matrix(
     }
 
 
+@router.get("/matrix/cell")
+def matrix_cell(
+    row: str = Query(description="哪一行：resume=简历筛选数 / phone=电话沟通人数 / test=笔试人数 / interview=面试人数"),
+    pos_id: int = Query(description="哪个岗位（岗位编号）"),
+    range: str = Query(default="week", description="时间范围，同 /stats/matrix"),
+    start_date: date | None = Query(default=None, description="自定义范围的开始日期（仅 range=custom 用）"),
+    end_date: date | None = Query(default=None, description="自定义范围的结束日期（仅 range=custom 用）"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """看交叉表某个格子里具体是哪些人（点数字时调它）
+
+**干什么用**：前端点「阶段 × 岗位汇总」里某个数字，弹出这些人是谁。
+
+**怎么填**：`row`（哪一行）+ `pos_id`（哪个岗位）+ `range`（时间范围，同交叉表）。
+
+**返回什么**：
+```json
+{
+  "row": "test", "row_label": "笔试人数",
+  "position_id": 9, "position_label": "Go后端(中级)",
+  "count": 3,
+  "people": [
+    {"app_id": 78, "candidate_id": 74, "name": "乔从旺", "stage_text": "待专业面",
+     "is_custom": false, "passed": true, "overall_status": "pending", "current_stage": "pro"}
+  ]
+}
+```
+`passed=true` 表示这个人**已经通过**了这一关（现在在更后面的环节）；`false` 表示他**正停在这一关**等着。
+名单口径与格子数字完全一致。
+
+**可能出错**：400 row 不合法 / 岗位不存在；404 不需要（用 400 统一提示）。
+"""
+    if range == "custom" and start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+    start, end, _label = summary.resolve_range(range, start_date, end_date)
+    notes = settings_svc.get_stage_notes(db, user.id)
+    try:
+        return summary.matrix_cell_people(db, row, pos_id, start, end, notes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/in-progress")
 def in_progress(
     range: str = Query(default="week", description="时间范围：week 本周（默认）/ last_week 上周 / month 本月 / all 全部 / custom 自定义"),
     start_date: date | None = Query(default=None, description="自定义范围的开始日期（仅 range=custom 时用）"),
     end_date: date | None = Query(default=None, description="自定义范围的结束日期（仅 range=custom 时用）"),
+    stages: list[str] | None = Query(
+        default=None,
+        description="只显示当前处于这些阶段的人，可传多个（如 stages=test&stages=pro）；不传 = 全部阶段。可选值同 stage 过滤：ai/resume/contact/phone/test/pro/hr/final",
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -230,9 +277,13 @@ def in_progress(
 """
     if range == "custom" and start_date and end_date and start_date > end_date:
         raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+    if stages:
+        bad = [x for x in stages if x not in STAGES]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"stages 里有不合法阶段值：{', '.join(bad)}")
     start, end, label = summary.resolve_range(range, start_date, end_date)
     notes = settings_svc.get_stage_notes(db, user.id)
-    data = summary.build_in_progress(db, start, end, notes)
+    data = summary.build_in_progress(db, start, end, notes, stages)
     return {
         "range": range if range in summary.RANGE_LABELS else "all",
         "range_label": label,

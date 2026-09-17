@@ -6,13 +6,43 @@
 -->
 <script setup>
 import { ElMessage } from 'element-plus'
-import { computed, inject, onMounted, reactive, ref } from 'vue'
+import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { exportFields, exportFile, positionApi, settingsApi, statsApi } from '../api'
 import { STAGES, STAGE_LABEL, STATUSES } from '../constants'
 import { downloadBlob } from '../utils/download'
 
+const router = useRouter()
 const refreshStats = inject('refreshStats')
+
+// 阶段多选（用于「进行中名单」筛选）：默认全选
+const STAGE_OPTIONS = STAGES.map((s) => ({ value: s.value, label: s.label }))
+const pickedStages = ref(STAGES.map((s) => s.value))
+// 阶段勾选一变就重新取名单（用 watch：手动选和程序改都生效）
+watch(pickedStages, () => loadProgress(), { deep: true })
+
+// 格子点开看名单
+const cellVisible = ref(false)
+const cellLoading = ref(false)
+const cellData = ref(null)
+
+async function openCell(rowKey, posId) {
+  if (posId == null) return
+  cellLoading.value = true
+  cellVisible.value = true
+  cellData.value = null
+  try {
+    const params = { row: rowKey, pos_id: posId, ...rangeParams() }
+    cellData.value = await statsApi.matrixCell(params)
+  } finally {
+    cellLoading.value = false
+  }
+}
+function gotoApp(appId) {
+  cellVisible.value = false
+  router.push({ name: 'application-detail', params: { id: appId } })
+}
 
 // ---- 统计 ----
 const stats = ref(null)
@@ -104,7 +134,12 @@ const exportingReport = ref(false)
 async function loadProgress() {
   progressLoading.value = true
   try {
-    progress.value = await statsApi.inProgress(rangeParams())
+    // 阶段多选传给后端；全选时不传（等于不筛）
+    const params = rangeParams()
+    if (pickedStages.value.length && pickedStages.value.length < STAGES.length) {
+      params.stages = pickedStages.value
+    }
+    progress.value = await statsApi.inProgress(params)
   } finally {
     progressLoading.value = false
   }
@@ -308,7 +343,8 @@ async function doExport() {
       </template>
 
       <div class="matrix-hint">
-        数字 = 所选时间范围内<b>到达</b>过这一关的人数（面试含专业面/HR面/终面，同一人只计一次）。
+        数字 = 所选时间范围内<b>通过了这一关</b>或<b>正停在这一关</b>的人数（在这一关被淘汰的不算）。
+        「面试人数」= 通过专业面的（含后来过了 HR 面、终面的人）。<b>点数字可看具体是谁</b>。
       </div>
 
       <el-table :data="matrix?.rows || []" v-loading="matrixLoading" size="small" border empty-text="暂无数据">
@@ -323,7 +359,7 @@ async function doExport() {
           align="center"
         >
           <template #default="{ row }">
-            <span v-if="row.cells[i] > 0">{{ row.cells[i] }}</span>
+            <span v-if="row.cells[i] > 0" class="cell-num" @click="openCell(row.key, p.id)">{{ row.cells[i] }}</span>
             <span v-else class="zero">–</span>
           </template>
         </el-table-column>
@@ -346,6 +382,18 @@ async function doExport() {
         <div class="card-header">
           <span>{{ matrix?.range_label || '本周' }}进行中的候选人所处阶段</span>
           <div class="matrix-tools">
+            <span class="muted">阶段</span>
+            <el-select
+              v-model="pickedStages"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="全部阶段"
+              size="small"
+              style="width: 240px"
+            >
+              <el-option v-for="o in STAGE_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
             <span class="muted">共 {{ progress?.total || 0 }} 人</span>
             <el-button type="primary" size="small" :loading="exportingReport" @click="exportReport">
               <el-icon><Download /></el-icon>&nbsp;导出周报（两个表）
@@ -393,6 +441,35 @@ async function doExport() {
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 点格子看名单 -->
+    <el-dialog v-model="cellVisible" :title="cellData ? `${cellData.row_label} × ${cellData.position_label}（${cellData.count} 人）` : '明细'" width="640px">
+      <el-table :data="cellData?.people || []" v-loading="cellLoading" border size="small" empty-text="这一格没有人">
+        <el-table-column prop="name" label="姓名" width="130" />
+        <el-table-column label="现在所处" min-width="130">
+          <template #default="{ row }">
+            <span>{{ row.stage_text }}</span>
+            <el-tag v-if="row.is_custom" size="small" type="warning" effect="plain" style="margin-left: 6px">手动</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="本关情况" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.passed ? 'success' : 'warning'" effect="light">
+              {{ row.passed ? '已通过' : '正等待' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="gotoApp(row.app_id)">查看</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="cellVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
 
     <!-- 导出面板 -->
     <el-card shadow="never" style="margin-top: 14px">
@@ -548,6 +625,15 @@ async function doExport() {
 }
 .zero {
   color: var(--el-text-color-placeholder);
+}
+/* 交叉表格子里的数字：可点 */
+.cell-num {
+  cursor: pointer;
+  color: var(--el-color-primary);
+  border-bottom: 1px dashed var(--el-color-primary-light-5);
+}
+.cell-num:hover {
+  font-weight: 600;
 }
 /* 阶段文案：可点，鼠标变成手型 */
 .stage-text {

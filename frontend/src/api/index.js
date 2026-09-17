@@ -47,6 +47,8 @@ export const statsApi = {
   matrix: (params) => http.get('/stats/matrix', { params }),
   // 进行中的候选人所处阶段清单
   inProgress: (params) => http.get('/stats/in-progress', { params }),
+  // 交叉表某个格子里具体是哪些人
+  matrixCell: (params) => http.get('/stats/matrix/cell', { params }),
 }
 
 // ---- 系统设置（阶段文案改写）----
