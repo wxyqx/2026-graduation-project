@@ -9,7 +9,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { applicationApi } from '../api'
+import { applicationApi, candidateApi } from '../api'
 import { RESULT_LABEL, STAGE_LABEL, STATUS_LABEL, STATUS_TYPE } from '../constants'
 import { fmtTime } from '../utils/format'
 
@@ -85,6 +85,49 @@ async function revert() {
   await load()
   refreshStats?.()
 }
+
+// ---- 改候选人姓名（AI 有时会认错名字，人工纠正）----
+async function renameCandidate() {
+  const cur = app.value?.candidate
+  if (!cur) return
+  let input
+  try {
+    const res = await ElMessageBox.prompt('请输入正确的姓名', '修改候选人姓名', {
+      inputValue: cur.name || '',
+      inputPlaceholder: '例：樊浩',
+      inputValidator: (v) => (v && v.trim() ? true : '姓名不能为空'),
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+    })
+    input = res.value.trim()
+  } catch {
+    return // 取消
+  }
+  if (input === (cur.name || '').trim()) return // 没改动
+
+  try {
+    await candidateApi.update(cur.id, { name: input })
+  } catch (e) {
+    // 409 = 与已有候选人重名：把后端的中文说明给用户看，确认后再带 confirm_duplicate 提交
+    if (e.response?.status === 409) {
+      try {
+        await ElMessageBox.confirm(e.detail || '已有同名候选人，确定要继续吗？', '重名提示', {
+          type: 'warning',
+          confirmButtonText: '仍要改成同名',
+          cancelButtonText: '取消',
+        })
+      } catch {
+        return
+      }
+      await candidateApi.update(cur.id, { name: input, confirm_duplicate: true })
+    } else {
+      throw e // 其它错误交给全局拦截器提示
+    }
+  }
+  ElMessage.success('姓名已更新')
+  await load()
+  refreshStats?.()
+}
 </script>
 
 <template>
@@ -109,7 +152,12 @@ async function revert() {
           <el-card shadow="never">
             <template #header>候选人</template>
             <el-descriptions :column="1" size="small">
-              <el-descriptions-item label="姓名">{{ app.candidate?.name }}</el-descriptions-item>
+              <el-descriptions-item label="姓名">
+                {{ app.candidate?.name }}
+                <el-button link type="primary" size="small" style="margin-left: 8px" @click="renameCandidate">
+                  改姓名
+                </el-button>
+              </el-descriptions-item>
               <el-descriptions-item label="备注">{{ app.candidate?.remark || '—' }}</el-descriptions-item>
               <el-descriptions-item label="录入时间">{{ fmtTime(app.candidate?.create_time) }}</el-descriptions-item>
             </el-descriptions>

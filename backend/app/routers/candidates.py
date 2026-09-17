@@ -123,22 +123,59 @@ def get_candidate(can_id: Annotated[int, Path(description="候选人编号")], d
 def update_candidate(
     can_id: Annotated[int, Path(description="候选人编号")], body: CandidateUpdate, db: Session = Depends(get_db)
 ):
-    """改候选人备注
+    """改候选人：可以改备注，也可以改姓名
 
-**干什么用**：记点东西，比如「已电话确认到岗时间」「期望薪资 20k」。
+**干什么用**：
+- 记备注，比如「已电话确认到岗时间」「期望薪资 20k」；
+- **纠正姓名**——AI 识别简历有时会认错名字（最典型的是把 PDF 文件名当成了姓名），人工改过来即可。
 
-**怎么填**：`{"remark": "新备注"}`。传 `{"remark": ""}` 可以清空。姓名不能改（它是认人的依据）。
+**怎么填**：
+- 只改备注：`{"remark": "新备注"}`，传空字符串可清空；
+- 改姓名：`{"name": "樊浩"}`，姓名不能传空；
+- 改名不影响任何投递记录（投递按候选人编号关联），历史进度与时间线原样保留。
+
+**重名怎么办**：如果新姓名与**另一个**候选人完全相同，第一次会返回 409 并告诉你是哪个候选人、他名下有几条投递；
+你确认「确实是另一个同名的不同人」后，带上 `{"name": "...", "confirm_duplicate": true}` 再提交一次即可改成同名。
 
 **可能出错**：
+- 400：姓名传了空字符串
 - 404：没有这个候选人
+- 409：新姓名与已有候选人重名（需带 confirm_duplicate=true 确认）
 """
     c = _get_or_404(db, can_id)
-    # model_fields_set = 前端真正传了的字段集合。这样能区分「没传 remark」和「传了 remark 但值是空（想清空）」
+    # model_fields_set = 前端真正传了的字段集合。这样能区分「没传某个字段」和「传了但值是空」
     if "remark" in body.model_fields_set:
         c.remark = body.remark
+
+    if "name" in body.model_fields_set or body.name is not None:
+        new_name = (body.name or "").strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="姓名不能为空")
+        # 只有真的要改名时才查重（改成一样的名字不算改）
+        if new_name != c.name and not body.confirm_duplicate:
+            other = db.scalar(
+                select(Candidate).where(Candidate.name == new_name, Candidate.id != c.id)
+            )
+            if other is not None:
+                n = db.scalar(
+                    select(func.count()).select_from(Application).where(Application.can_id == other.id)
+                ) or 0
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"已有同名候选人「{new_name}」（名下 {n} 条投递）。"
+                        "如果是两个同名的人、确实要改成一样的名字，请确认后重试。"
+                    ),
+                )
+        c.name = new_name
+
     db.commit()
     db.refresh(c)
-    count = db.scalar(select(func.count()).select_from(Application).where(Application.can_id == can_id)) or 0
+    from app.services import positions as positions_svc
+    stmt = positions_svc.exclude_hidden_apps(
+        select(func.count()).select_from(Application).where(Application.can_id == can_id), db
+    )
+    count = db.scalar(stmt) or 0
     return _out(c, count)
 
 

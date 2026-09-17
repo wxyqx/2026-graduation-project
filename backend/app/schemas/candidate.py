@@ -14,11 +14,23 @@ class CandidateIn(BaseModel):
 
 
 class CandidateUpdate(BaseModel):
-    """编辑候选人：目前只允许改备注（姓名是识别同一个人的依据，不让随便改）。"""
+    """编辑候选人：可以改备注，也可以改姓名。
 
+    **关于改姓名**：AI 识别简历有时会把名字认错（比如把 PDF 文件名当成了姓名），
+    这里提供人工纠正。改名不影响任何投递记录——投递是按候选人编号关联的，
+    所以历史进度、各阶段时间线都原样保留。姓名不能改成空。
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=255, description="新的姓名，不传=不改")
     remark: str | None = Field(default=None, max_length=500, description="新的备注。传空字符串可以清空备注")
+    confirm_duplicate: bool = Field(
+        default=False,
+        description="重名确认：改成与已有候选人相同的姓名时，第一次会返回 409；确认无误后带 true 再提交一次即可",
+    )
 
-    model_config = {"json_schema_extra": {"examples": [{"remark": "已电话确认到岗时间"}]}}
+    model_config = {
+        "json_schema_extra": {"examples": [{"remark": "已电话确认到岗时间"}, {"name": "樊浩"}]}
+    }
 
 
 class CandidateOut(BaseModel):
