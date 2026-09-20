@@ -325,6 +325,87 @@ def run():
     check(c.get("/api/stats/matrix/cell", headers=H, params={"row": "zzz", "pos_id": 1}).status_code == 400, "非法 row 400")
     check(c.get("/api/stats/matrix/cell", headers=H, params={"row": "test", "pos_id": 999999}).status_code == 400, "岗位不存在 400")
 
+    print("== 面试行口径：三关任一在范围内 + 面过被淘汰也计入 ==")
+    # 造三个人，验证新口径（用直连 SQL 回拨时间戳，构造「跨时间范围」场景）
+    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password="your-password", database="ats")
+    cur = conn.cursor()
+
+    def new_cand_app(name, pos_id):
+        """临时建候选人 + 投递，返回 (cand_id, app_id)。"""
+        can = c.post("/api/candidates", headers=H, json={"name": name}).json()
+        created["candidates"].append(can["id"])
+        ap = c.post("/api/applications", headers=H, json={"can_id": can["id"], "pos_id": pos_id}).json()
+        created["applications"].append(ap["id"])
+        return can["id"], ap["id"]
+
+    def push(app_id, stages, results):
+        """把投递按给定阶段/结果推进。stages=['ai','resume',...]，results 与之对应（默认全 pass）。"""
+        for st, res in zip(stages, results):
+            r = c.post(f"/api/applications/{app_id}/advance", headers=H, json={"fromStage": st, "result": res})
+            assert r.status_code == 200, f"推进 {st} 失败：{r.text}"
+
+    def interview_cell(pos_id, rng="week"):
+        m = c.get("/api/stats/matrix", headers=H, params={"range": rng}).json()
+        row = next(r for r in m["rows"] if r["key"] == "interview")
+        idx = next(i for i, p in enumerate(m["positions"]) if p["id"] == pos_id)
+        return row["cells"][idx], m
+
+    LAST_YEAR = "2025-03-01 10:00:00"
+
+    # ① 面试环节被淘汰 → 计入面试行，且 state=rejected
+    _, ap_rej = new_cand_app(f"面试淘汰_{STAMP}", p2)
+    push(ap_rej, ["ai", "resume", "contact", "phone", "test", "pro"], ["pass"] * 5 + ["fail"])
+    cell = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "week"}).json()
+    me = next((x for x in cell["people"] if x["app_id"] == ap_rej), None)
+    check(me is not None and me["state"] == "rejected", "面试环节淘汰 → 面试行计入且 state=rejected")
+
+    # ② 跨时间范围：专业面通过（回拨到去年）+ HR面本周被淘汰 → 本周仍计入（旧口径只看专业面，不会计入）
+    #    用 HR 面淘汰（而非通过）来避开"停在终面等待"带来的干扰（等待也会用 update_time 计入本周）
+    _, ap_cross = new_cand_app(f"跨范围_{STAMP}", p2)
+    push(ap_cross, ["ai", "resume", "contact", "phone", "test", "pro", "hr"], ["pass"] * 6 + ["fail"])
+    cur.execute("UPDATE Application SET pro_time=%s WHERE ID=%s", (LAST_YEAR, ap_cross))
+    conn.commit()
+    cell2 = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "week"}).json()
+    hit2 = next((x for x in cell2["people"] if x["app_id"] == ap_cross), None)
+    check(hit2 is not None, "专业面在去年、HR面在本周 → 本周面试行仍计入他（旧口径不会）")
+    check(hit2 and hit2["state"] == "rejected", "该人 state=rejected（HR面被淘汰）")
+    # 再把 hr_time 也回拨 → 本周不计入，全部范围仍计入
+    cur.execute("UPDATE Application SET hr_time=%s WHERE ID=%s", (LAST_YEAR, ap_cross))
+    conn.commit()
+    cell3 = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "week"}).json()
+    check(not any(x["app_id"] == ap_cross for x in cell3["people"]), "两关都回拨到去年 → 本周不计入")
+    cell4 = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "all"}).json()
+    check(any(x["app_id"] == ap_cross for x in cell4["people"]), "全部范围 → 仍计入")
+
+    # ③ 同人三关都命中只算一次：按格子数字核对（本人只贡献 1）
+    base_all, _ = interview_cell(p2, "all")
+    _, ap_multi = new_cand_app(f"三关_{STAMP}", p2)
+    push(ap_multi, ["ai", "resume", "contact", "phone", "test", "pro", "hr", "final"], ["pass"] * 8)
+    after_all, _ = interview_cell(p2, "all")
+    check(after_all - base_all == 1, f"三关都命中只 +1（{base_all} → {after_all}）")
+
+    # ④ 对照组：笔试环节淘汰 **不**计入笔试行
+    _, ap_test_fail = new_cand_app(f"笔试淘汰_{STAMP}", p2)
+    push(ap_test_fail, ["ai", "resume", "contact", "phone", "test"], ["pass"] * 4 + ["fail"])
+    m_all = c.get("/api/stats/matrix", headers=H, params={"range": "all"}).json()
+    trow = next(r for r in m_all["rows"] if r["key"] == "test")
+    tidx = next(i for i, p in enumerate(m_all["positions"]) if p["id"] == p2)
+    tcell = c.get("/api/stats/matrix/cell", headers=H, params={"row": "test", "pos_id": p2, "range": "all"}).json()
+    check(not any(x["app_id"] == ap_test_fail for x in tcell["people"]), "笔试淘汰 → 笔试行不计入（面试行才含淘汰）")
+
+    # ⑤ 面试行每个非零格子的名单人数 == 格子数字，且每人都有 state
+    m_iv = c.get("/api/stats/matrix", headers=H, params={"range": "all"}).json()
+    ivrow = next(r for r in m_iv["rows"] if r["key"] == "interview")
+    for i, n in enumerate(ivrow["cells"]):
+        if n > 0:
+            pid = m_iv["positions"][i]["id"]
+            cc = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": pid, "range": "all"}).json()
+            check(cc["count"] == n, f"面试名单人数({cc['count']}) == 格子数字({n})")
+            check(all("state" in x for x in cc["people"]), "面试名单每人含 state")
+            break
+    cur.close()
+    conn.close()
+
     d_all = c.get("/api/stats/in-progress", headers=H, params={"range": "all"}).json()
     stage_of = {}
     for g in d_all["groups"]:

@@ -13,13 +13,16 @@
      「C++客户端(初级)—朱力伟」 / 「C++客户端(初级)—丘春辉」
   2. build_matrix()：算出每个格子里的人数
 
-格子里的数字是「在指定时间范围内**通过了这一关** 或 **正停在这一关**的人数」：
+格子里的数字，默认是「在指定时间范围内**通过了这一关** 或 **正停在这一关**的人数」：
   · 通过了这一关（含已进入下一关的）→ 算；用该关自己的时间戳判断是否落在范围内
   · 正停在这一关、还没打分 → 算；用 update_time（进入这一关的时间）判断
   · 在这一关被淘汰 → 不算
 这样既包含「已经过了这关的人」，也包含「正在进行到这关的人」，不会漏人。
 
-面试那一行只判**专业面**：过了专业面就计入（含后来过了 HR 面、终面的人）。
+**面试那一行是特例**（见 ROW_DEFS 的 include_rejected 开关）：
+  · 涉及「专业面 / HR面 / 终面」三关，**任一关命中时间范围就计入**（不要求是专业面）；
+  · 在这三关里**被淘汰的也算**（面过就计入，所以这一行统计的是"进入面试环节的人数"）；
+  · 同一个人三关都命中，也只计一次。
 """
 
 from dataclasses import dataclass
@@ -133,14 +136,33 @@ def resolve_range(
 # 三、交叉表
 # ======================================================================
 
-# 表格的行定义：key（程序用）、label（显示用）、判定用哪个阶段
-# 「面试人数」只判专业面这一关：过了专业面就计入（含后来过了 HR 面/终面的人）
+@dataclass
+class RowDef:
+    """交叉表的一行。
+
+    - key / label：程序用 / 显示用
+    - stages：这一行判定涉及哪几关（一般是 1 关；面试行是 3 关）
+    - include_rejected：在这一关**被淘汰**的人算不算进来
+        · False（默认）：不算——「通过该关」或「正停在该关等待」才计入（简历/电话/笔试行的口径）
+        · True：算——只要**在该关面过**就计入（面试行的口径，面过就计入）
+    """
+
+    key: str
+    label: str
+    stages: tuple[str, ...]
+    include_rejected: bool = False
+
+
+# 表格的行定义（口径见 RowDef 注释）
 ROW_DEFS = [
-    ("resume", "简历筛选数", "resume"),
-    ("phone", "电话沟通人数", "phone"),
-    ("test", "笔试人数", "test"),
-    ("interview", "面试人数", "pro"),
+    RowDef("resume", "简历筛选数", ("resume",)),
+    RowDef("phone", "电话沟通人数", ("phone",)),
+    RowDef("test", "笔试人数", ("test",)),
+    # 面试行：专业面 / HR面 / 终面 任一关在范围内就计入；在这三关被淘汰的也算
+    RowDef("interview", "面试人数", ("pro", "hr", "final"), include_rejected=True),
 ]
+
+ROW_BY_KEY = {r.key: r for r in ROW_DEFS}
 
 # 各阶段的时间戳字段（与 state_machine.STAGE_FIELDS 一致）
 STAGE_TIME_FIELD = {
@@ -180,35 +202,78 @@ def _in_range(t: datetime | None, start: datetime | None, end: datetime | None) 
     return True
 
 
-def stage_hit(app: Application, stage: str, start: datetime | None, end: datetime | None) -> tuple[bool, bool]:
-    """判断某个人算不算在「这一关」里。
+# 单关判定的结果
+VISIT_NONE = "none"  # 没走到这一关 / 时间不在范围内
+VISIT_WAITING = "waiting"  # 正停在这一关、还没打分（且在范围内）
+VISIT_PASSED = "passed"  # 已经通过了这一关（且时间在范围内）
+VISIT_REJECTED = "rejected"  # 在这一关被打成淘汰（且时间在范围内）
 
-    返回 (算不算, 是否已通过这一关)：
-      · 已通过这一关（该关 result = pass）→ 算，且 passed=True；用该关时间戳判范围
-      · 正停在这一关还没打分（current_stage=该关、该关无结果、仍进行中）→ 算，passed=False；用 update_time 判范围
-      · 在这一关被淘汰 / 还没走到这一关 → 不算
-    没有结果字段的阶段（contact）只能靠「正停在这一关」判断。
+
+def _stage_visit(app: Application, stage: str, start: datetime | None, end: datetime | None) -> str:
+    """看这个人在某一关的「到访情况」，返回 VISIT_* 之一。
+
+    · 已通过（result=pass）：看该关时间戳是否在范围内
+    · 正停在这一关没打分（进行中）：看 update_time 是否在范围内
+    · 在这一关被淘汰（result=fail）：看该关时间戳是否在范围内
+    没有结果/时间字段的阶段（contact）只能靠「正停在这一关」判断。
     """
     result_field = RESULT_FIELD.get(stage)
     time_field = STAGE_TIME_FIELD.get(stage)
     result = getattr(app, result_field, None) if result_field else None
 
-    # 情况一：已经通过了这一关（包括后来走到了更后面的阶段）
-    if result == "pass":
-        if time_field:
-            t = getattr(app, time_field, None)
-            if t is None:
-                # 时间戳缺失（理论上不会有）：只在不限时间时计入
-                return (start is None and end is None), True
-            return _in_range(t, start, end), True
-        return True, True
+    # 已经打过分的（通过 / 淘汰）：用该关自己的时间戳判范围
+    if result in ("pass", "fail"):
+        t = getattr(app, time_field, None) if time_field else None
+        if time_field and t is None:
+            # 时间戳缺失（理论上不会有）：只在不限时间时算在范围内
+            in_range = start is None and end is None
+        elif time_field:
+            in_range = _in_range(t, start, end)
+        else:
+            in_range = True  # 没有时间字段的阶段（contact）
+        if not in_range:
+            return VISIT_NONE
+        return VISIT_PASSED if result == "pass" else VISIT_REJECTED
 
-    # 情况二：正停在这一关、还没打分（进行中）
+    # 还没打分、正停在这一关等着（进行中）
     if app.current_stage == stage and result is None and app.overall_status == "pending":
-        return _in_range(app.update_time, start, end), False
+        return VISIT_WAITING if _in_range(app.update_time, start, end) else VISIT_NONE
 
-    # 其余：在这一关被淘汰，或根本没走到这一关
-    return False, False
+    # 其余：还没走到这一关
+    return VISIT_NONE
+
+
+def row_membership(app: Application, row: RowDef, start: datetime | None, end: datetime | None) -> tuple[bool, str]:
+    """判断某个人算不算在交叉表的「这一行」里。
+
+    返回 (算不算, 状态)：
+      · 不算 → (False, "")
+      · 算   → (True, "passed" / "waiting" / "rejected")
+        状态优先级：**淘汰 > 通过 > 等待**。
+        · 淘汰最优先：一个人在专业面通过、后来 HR面被淘汰，应该显示「已淘汰」——
+          因为流程已终止，标成「已通过」会与投递列表的状态自相矛盾；
+        · 其次是"通过过任一场就标已通过"（正等第一场才算等待）。
+      · include_rejected=False 的行（简历/电话/笔试）：被淘汰的不算
+      · include_rejected=True 的行（面试）：被淘汰的也算
+
+    这是**唯一**的判定入口——交叉表计数（build_matrix）和点开看名单（matrix_cell_people）都用它，
+    保证「格子里的数字」和「点开看到的名单」永远一致。
+    """
+    states = [_stage_visit(app, st, start, end) for st in row.stages]
+    hits = [s for s in states if s != VISIT_NONE]
+    if not hits:
+        return False, ""
+
+    # 状态优先级：淘汰 > 通过 > 等待（淘汰是终态，信息量最大，放最前）
+    if VISIT_REJECTED in hits:
+        if not row.include_rejected:
+            return False, ""  # 该行不算被淘汰的人
+        state = "rejected"
+    elif VISIT_PASSED in hits:
+        state = "passed"
+    else:
+        state = "waiting"
+    return True, state
 
 
 def build_matrix(
@@ -229,23 +294,23 @@ def build_matrix(
 
     apps = db.scalars(select(Application)).all()
 
-    counts = {row_key: [0] * len(cols) for row_key, _, _ in ROW_DEFS}
+    counts = {r.key: [0] * len(cols) for r in ROW_DEFS}
 
     for app in apps:
         col = pos_index.get(app.pos_id)
         if col is None:
             continue  # 岗位可能已被删（外键限制下一般不会），跳过更安全
-        for row_key, _label, stage in ROW_DEFS:
-            hit, _passed = stage_hit(app, stage, start, end)
+        for row in ROW_DEFS:
+            hit, _state = row_membership(app, row, start, end)
             if hit:
-                counts[row_key][col] += 1
+                counts[row.key][col] += 1  # 每行每人只加一次（三关都命中也不会重复计）
 
     rows = []
-    for row_key, label, _stage in ROW_DEFS:
-        cells = counts[row_key]
-        rows.append({"key": row_key, "label": label, "cells": cells, "total": sum(cells)})
+    for row in ROW_DEFS:
+        cells = counts[row.key]
+        rows.append({"key": row.key, "label": row.label, "cells": cells, "total": sum(cells)})
 
-    col_totals = [sum(counts[k][i] for k, _, _ in ROW_DEFS) for i in range(len(cols))]
+    col_totals = [sum(counts[r.key][i] for r in ROW_DEFS) for i in range(len(cols))]
     grand_total = sum(col_totals)
 
     return {
@@ -268,13 +333,14 @@ def matrix_cell_people(
     """列出某个格子里具体是哪些人（点数字时用）。
 
     返回 {row, row_label, position_id, position_label, count, people:[...]}
-    people 每项：{app_id, candidate_id, name, stage_text, passed, is_custom}
-    passed=True 表示这个人已经通过了这一关（否则是正停在这一关）。
+    people 每项：{app_id, candidate_id, name, stage_text, is_custom, state, passed}
+    state 取值：passed=已通过该环节 / waiting=正停在该环节等待 / rejected=在该环节被淘汰
+    （面试行的 rejected 表示"面过但没过"；passed 字段为旧兼容保留，等价于 state=='passed'）
     """
-    row_def = next((r for r in ROW_DEFS if r[0] == row_key), None)
+    row_def = ROW_BY_KEY.get(row_key)
     if row_def is None:
         raise ValueError("row 不是合法的行（可选：resume / phone / test / interview）")
-    _, row_label, stage = row_def
+    row_label = row_def.label
 
     notes = notes or {}
     position = db.get(Position, pos_id)
@@ -287,7 +353,7 @@ def matrix_cell_people(
     people = []
     apps = db.scalars(select(Application).where(Application.pos_id == pos_id)).all()
     for app in apps:
-        hit, passed = stage_hit(app, stage, start, end)
+        hit, state = row_membership(app, row_def, start, end)
         if not hit:
             continue
         note = (notes.get(str(app.id)) or "").strip()
@@ -298,7 +364,10 @@ def matrix_cell_people(
                 "name": app.candidate.name if app.candidate else "",
                 "stage_text": note or auto_stage_text(app),
                 "is_custom": bool(note),
-                "passed": passed,
+                # state：passed=已通过该环节 / waiting=正等待 / rejected=该环节被淘汰
+                "state": state,
+                # passed 保留（旧字段）：只有 passed 状态才算 true，rejected/waiting 都是 false
+                "passed": state == "passed",
                 "overall_status": app.overall_status,
                 "current_stage": app.current_stage,
             }

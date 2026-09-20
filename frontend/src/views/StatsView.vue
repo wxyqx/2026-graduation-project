@@ -22,6 +22,13 @@ const pickedStages = ref(STAGES.map((s) => s.value))
 // 阶段勾选一变就重新取名单（用 watch：手动选和程序改都生效）
 watch(pickedStages, () => loadProgress(), { deep: true })
 
+// 名单里「本关情况」的三种状态
+const STATE_META = {
+  passed: { text: '已通过', type: 'success' },
+  waiting: { text: '正等待', type: 'warning' },
+  rejected: { text: '已淘汰', type: 'danger' },
+}
+
 // 格子点开看名单
 const cellVisible = ref(false)
 const cellLoading = ref(false)
@@ -344,7 +351,8 @@ async function doExport() {
 
       <div class="matrix-hint">
         数字 = 所选时间范围内<b>通过了这一关</b>或<b>正停在这一关</b>的人数（在这一关被淘汰的不算）。
-        「面试人数」= 通过专业面的（含后来过了 HR 面、终面的人）。<b>点数字可看具体是谁</b>。
+        「面试人数」= 专业面 / HR面 / 终面 <b>任一关</b>在范围内的人数，<b>面过即计入（含被淘汰的）</b>。
+        <b>点数字可看具体是谁</b>。
       </div>
 
       <el-table :data="matrix?.rows || []" v-loading="matrixLoading" size="small" border empty-text="暂无数据">
@@ -454,8 +462,8 @@ async function doExport() {
         </el-table-column>
         <el-table-column label="本关情况" width="110" align="center">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.passed ? 'success' : 'warning'" effect="light">
-              {{ row.passed ? '已通过' : '正等待' }}
+            <el-tag size="small" :type="STATE_META[row.state]?.type || 'warning'" effect="light">
+              {{ STATE_META[row.state]?.text || '—' }}
             </el-tag>
           </template>
         </el-table-column>
