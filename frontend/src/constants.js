@@ -19,6 +19,21 @@ export const STAGES = [
 // 代号 → 中文，例：STAGE_LABEL.phone === '电话沟通'
 export const STAGE_LABEL = Object.fromEntries(STAGES.map((s) => [s.value, s.label]))
 
+// 代号 → 序号（0~7）。管线的深浅、进度推算都靠它
+export const STAGE_INDEX = Object.fromEntries(STAGES.map((s, i) => [s.value, i]))
+
+// 8 关的渐变色阶：浅 → 深（越往后颜色越深 = 走得越远）
+// 具体色值定义在 styles/theme.css 里，按主题切换；这里只给出变量名
+export const STAGE_COLOR = Object.fromEntries(
+  STAGES.map((s, i) => [s.value, `var(--ats-stage-${i + 1})`]),
+)
+
+// 浅色阶段上的字用深色、深色阶段上的字用白色 —— 保证对比度
+export const STAGE_ON_LIGHT = 3 // 前 3 关（第 1~3 关）浅，用深字
+export function stageTextColor(index) {
+  return index < STAGE_ON_LIGHT ? 'var(--ats-on-light)' : 'var(--ats-on-dark)'
+}
+
 // 整体状态：type 是 Element Plus 标签（el-tag）的颜色种类
 export const STATUSES = [
   { value: 'pending', label: '进行中', type: 'primary' },

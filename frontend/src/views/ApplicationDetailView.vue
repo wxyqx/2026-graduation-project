@@ -1,8 +1,11 @@
 <!--
-  【投递详情页】一条投递的全貌：
-    上方两张卡：候选人信息、岗位信息
-    中间：8 关时间线（el-steps）——每关显示结果和时间，当前关高亮，淘汰的关标红
-    下方：AI 筛选理由 + 操作按钮（通过 / 淘汰 / 撤回），操作后重新拉一次详情
+  【投递详情页】一条投递的全貌。
+
+  设计说明（v3.12）：这一页的主体是「8 关管线」，不再是几张并列的信息卡。
+    · 候选人 / 岗位信息压缩成顶部一条信息带，把版面让给管线
+    · 管线是页面主角：每关一个节点，连接线按进度染色；已过的关实心带对勾，
+      当前关加光晕并标「进行中」，被淘汰的关整节点标红
+    · 结果与时间拆成两个元素显示，不再用「通过 · 2026-09-15 13:34」这种中点拼接
 -->
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -10,7 +13,7 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { applicationApi, candidateApi } from '../api'
-import { RESULT_LABEL, STAGE_LABEL, STATUS_LABEL, STATUS_TYPE } from '../constants'
+import { RESULT_LABEL, STAGE_COLOR, STAGE_LABEL, STATUS_LABEL, STATUS_TYPE } from '../constants'
 import { fmtTime } from '../utils/format'
 
 const route = useRoute()
@@ -30,32 +33,24 @@ async function load() {
 }
 onMounted(load)
 
-// 返回列表：能用浏览器后退就用后退（这样能带着原来的筛选条件回到列表页）；
-// 如果是直接打开这个详情网址（没有上一页），就退回投递列表首页
+// 返回列表：能用浏览器后退就用后退（带着原来的筛选条件回去）；
+// 直接打开这个网址（没有上一页）就退回投递列表首页
 function goBack() {
   if (window.history.length > 1) router.back()
   else router.push({ name: 'applications' })
 }
 
-// el-steps 的 active 是「已完成到第几步」的数字：当前关的下标
 const activeIndex = computed(() => {
   if (!app.value) return 0
   return app.value.stages.findIndex((s) => s.stage === app.value.current_stage)
 })
 
-// 每一关的显示状态：淘汰 → error；通过 → success；当前关 → process；后面的 → wait
-function stepStatus(stage, index) {
-  if (stage.result === 'fail') return 'error'
-  if (stage.result === 'pass') return 'success'
-  if (index === activeIndex.value) return app.value.overall_status === 'pass' ? 'success' : 'process'
-  return 'wait'
-}
-function stepDesc(stage) {
-  const parts = []
-  if (stage.result) parts.push(RESULT_LABEL[stage.result])
-  if (stage.time) parts.push(fmtTime(stage.time))
-  if (!parts.length && stage.is_current && app.value.overall_status === 'pending') parts.push('进行中')
-  return parts.join(' · ')
+// 每一关在管线上的形态
+function nodeState(s, i) {
+  if (s.result === 'fail') return 'rejected'
+  if (s.result === 'pass') return 'passed'
+  if (i === activeIndex.value) return app.value?.overall_status === 'pass' ? 'passed' : 'current'
+  return 'upcoming'
 }
 
 const isPending = computed(() => app.value?.overall_status === 'pending')
@@ -74,6 +69,7 @@ async function advance(result) {
   await load()
   refreshStats?.()
 }
+
 async function revert() {
   try {
     await ElMessageBox.confirm('撤回上一步操作？', '撤回确认', { type: 'warning' })
@@ -121,7 +117,7 @@ async function renameCandidate() {
       }
       await candidateApi.update(cur.id, { name: input, confirm_duplicate: true })
     } else {
-      throw e // 其它错误交给全局拦截器提示
+      throw e
     }
   }
   ElMessage.success('姓名已更新')
@@ -137,72 +133,86 @@ async function renameCandidate() {
         <el-button link @click="goBack">
           <el-icon><ArrowLeft /></el-icon>&nbsp;返回列表
         </el-button>
-        <h2 v-if="app">投递详情 #{{ app.id }}</h2>
+        <h2 v-if="app">{{ app.candidate?.name }}</h2>
+        <el-tag v-if="app" :type="STATUS_TYPE[app.overall_status]" size="small" effect="light">
+          {{ STATUS_LABEL[app.overall_status] }}
+        </el-tag>
+        <span v-if="app" class="muted">{{ app.position?.position_name }}</span>
       </div>
       <div v-if="app">
-        <el-button type="success" :disabled="!isPending" @click="advance('pass')">通过「{{ STAGE_LABEL[app.current_stage] }}」</el-button>
-        <el-button type="danger" :disabled="!isPending" @click="advance('fail')">淘汰</el-button>
-        <el-button type="warning" plain :disabled="!canRevert" @click="revert">撤回</el-button>
+        <el-button type="primary" :disabled="!isPending" @click="advance('pass')">
+          通过「{{ STAGE_LABEL[app.current_stage] }}」
+        </el-button>
+        <el-button type="danger" plain :disabled="!isPending" @click="advance('fail')">淘汰</el-button>
+        <el-button :disabled="!canRevert" @click="revert">撤回</el-button>
       </div>
     </div>
 
     <template v-if="app">
-      <el-row :gutter="14" class="cards">
-        <el-col :span="12">
-          <el-card shadow="never">
-            <template #header>候选人</template>
-            <el-descriptions :column="1" size="small">
-              <el-descriptions-item label="姓名">
-                {{ app.candidate?.name }}
-                <el-button link type="primary" size="small" style="margin-left: 8px" @click="renameCandidate">
-                  改姓名
-                </el-button>
-              </el-descriptions-item>
-              <el-descriptions-item label="备注">{{ app.candidate?.remark || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="录入时间">{{ fmtTime(app.candidate?.create_time) }}</el-descriptions-item>
-            </el-descriptions>
-          </el-card>
-        </el-col>
-        <el-col :span="12">
-          <el-card shadow="never">
-            <template #header>岗位</template>
-            <el-descriptions :column="1" size="small">
-              <el-descriptions-item label="岗位名称">{{ app.position?.position_name }}</el-descriptions-item>
-              <el-descriptions-item label="负责人">{{ app.position?.owner || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="岗位要求">
-                <div class="req">{{ app.position?.position_requirements || '—' }}</div>
-              </el-descriptions-item>
-            </el-descriptions>
-          </el-card>
-        </el-col>
-      </el-row>
+      <!-- 信息带：候选人 + 岗位压缩成一行，版面让给管线 -->
+      <div class="meta-band">
+        <div class="meta-item">
+          <span class="meta-label">姓名</span>
+          <span class="meta-value">
+            {{ app.candidate?.name }}
+            <el-button link type="primary" size="small" @click="renameCandidate">改姓名</el-button>
+          </span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">备注</span>
+          <span class="meta-value">{{ app.candidate?.remark || '—' }}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">负责人</span>
+          <span class="meta-value">{{ app.position?.owner || '—' }}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">录入时间</span>
+          <span class="meta-value ats-nums">{{ fmtTime(app.candidate?.create_time) }}</span>
+        </div>
+      </div>
 
-      <el-card shadow="never" class="cards">
-        <template #header>
-          <div class="steps-header">
-            <span>招聘流程</span>
-            <el-tag :type="STATUS_TYPE[app.overall_status]">{{ STATUS_LABEL[app.overall_status] }}</el-tag>
-          </div>
-        </template>
-        <el-steps :active="activeIndex" align-center>
-          <el-step
+      <!-- 管线：本页主体 -->
+      <section class="panel">
+        <div class="panel-head">
+          <h3>招聘流程</h3>
+          <span class="muted">当前在「{{ STAGE_LABEL[app.current_stage] }}」</span>
+        </div>
+
+        <ol class="pipeline">
+          <li
             v-for="(s, i) in app.stages"
             :key="s.stage"
-            :title="s.label"
-            :description="stepDesc(s)"
-            :status="stepStatus(s, i)"
-          />
-        </el-steps>
-      </el-card>
+            class="node"
+            :class="`is-${nodeState(s, i)}`"
+          >
+            <span class="node-dot" :style="{ background: STAGE_COLOR[s.stage] }">
+              <el-icon v-if="s.result === 'pass'"><Select /></el-icon>
+              <el-icon v-else-if="s.result === 'fail'"><CloseBold /></el-icon>
+            </span>
+            <span class="node-name">{{ s.label }}</span>
+            <span v-if="s.result" class="node-result" :class="s.result">{{ RESULT_LABEL[s.result] }}</span>
+            <span v-else-if="s.is_current && isPending" class="node-result current">进行中</span>
+            <span v-if="s.time" class="node-time ats-nums">{{ fmtTime(s.time) }}</span>
+          </li>
+        </ol>
+      </section>
 
-      <el-card shadow="never">
-        <template #header>AI 筛选</template>
+      <section class="panel">
+        <h3>岗位要求</h3>
+        <p class="req">{{ app.position?.position_requirements || '—' }}</p>
+      </section>
+
+      <section class="panel">
+        <h3>AI 筛选</h3>
         <template v-if="app.ai_result">
-          <el-tag :type="app.ai_result === 'pass' ? 'success' : 'danger'">{{ RESULT_LABEL[app.ai_result] }}</el-tag>
+          <el-tag :type="app.ai_result === 'pass' ? 'success' : 'danger'" size="small" effect="light">
+            {{ RESULT_LABEL[app.ai_result] }}
+          </el-tag>
           <p class="ai-comment">{{ app.ai_comment || '（AI 未给出理由）' }}</p>
         </template>
         <span v-else class="muted">尚未进行 AI 筛选。手动通过第一关即视为人工代替 AI 筛选。</span>
-      </el-card>
+      </section>
     </template>
   </div>
 </template>
@@ -211,25 +221,161 @@ async function renameCandidate() {
 .title-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ats-sp-3);
 }
-.cards {
-  margin-bottom: 14px;
-}
-.req {
-  white-space: pre-wrap;
-  line-height: 1.7;
-}
-.steps-header {
+
+/* ---- 信息带 ---- */
+.meta-band {
   display: flex;
+  flex-wrap: wrap;
+  gap: var(--ats-sp-6);
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--ats-radius);
+  padding: var(--ats-sp-3) var(--ats-sp-4);
+  margin-bottom: var(--ats-sp-4);
+}
+.meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ats-sp-2);
+}
+.meta-label {
+  font-size: var(--ats-fs-label);
+  color: var(--el-text-color-secondary);
+}
+.meta-value {
+  font-size: var(--ats-fs-body);
+  color: var(--el-text-color-primary);
+}
+
+/* ---- 分区面板 ---- */
+.panel {
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--ats-radius);
+  padding: var(--ats-sp-4);
+  margin-bottom: var(--ats-sp-4);
+}
+.panel h3 {
+  margin: 0 0 var(--ats-sp-3);
+  font-size: var(--ats-fs-card);
+  font-weight: var(--ats-fw-medium);
+}
+.panel-head {
+  display: flex;
+  align-items: baseline;
   justify-content: space-between;
+  gap: var(--ats-sp-3);
+}
+
+/* ---- 管线 ---- */
+.pipeline {
+  list-style: none;
+  margin: var(--ats-sp-6) 0 var(--ats-sp-2);
+  padding: 0;
+  display: flex;
+}
+.node {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  gap: 4px;
+  position: relative;
+  text-align: center;
+}
+/* 节点之间的连接线：左右各画半条，拼成一条贯穿的轨道 */
+.node::before,
+.node::after {
+  content: '';
+  position: absolute;
+  top: 13px;
+  height: 2px;
+  background: var(--ats-track);
+}
+.node::before {
+  left: 0;
+  right: 50%;
+}
+.node::after {
+  left: 50%;
+  right: 0;
+}
+.node:first-child::before,
+.node:last-child::after {
+  display: none;
+}
+/* 走过的路：连接线染成阶段色，读起来是"进度在推进" */
+.node.is-passed::before,
+.node.is-passed::after,
+.node.is-rejected::before,
+.node.is-current::before {
+  background: var(--ats-stage-5);
+}
+
+.node-dot {
+  position: relative;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+}
+/* 未到达：空心描边，形状保留但退到背景里 */
+.node.is-upcoming .node-dot {
+  background: var(--el-bg-color) !important;
+  border: 2px solid var(--ats-track);
+}
+/* 当前：加一圈光晕，明确"停在这一关" */
+.node.is-current .node-dot {
+  box-shadow: 0 0 0 4px var(--el-color-primary-light-8);
+}
+/* 淘汰：整节点用语义色，读起来是"终止" */
+.node.is-rejected .node-dot {
+  background: var(--el-color-danger) !important;
+  box-shadow: 0 0 0 4px var(--el-color-danger-light-9);
+}
+
+.node-name {
+  font-size: var(--ats-fs-note);
+  color: var(--el-text-color-regular);
+  font-weight: var(--ats-fw-medium);
+}
+.node.is-upcoming .node-name {
+  color: var(--el-text-color-placeholder);
+  font-weight: var(--ats-fw-normal);
+}
+.node-result {
+  font-size: var(--ats-fs-label);
+}
+.node-result.pass {
+  color: var(--el-color-success);
+}
+.node-result.fail {
+  color: var(--el-color-danger);
+}
+.node-result.current {
+  color: var(--el-color-primary);
+}
+.node-time {
+  font-size: var(--ats-fs-label);
+  color: var(--el-text-color-placeholder);
+}
+
+.req {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.8;
+  color: var(--el-text-color-regular);
 }
 .ai-comment {
-  margin: 10px 0 0;
+  margin: var(--ats-sp-2) 0 0;
   line-height: 1.8;
-}
-.muted {
-  color: var(--el-text-color-secondary);
+  color: var(--el-text-color-regular);
 }
 </style>

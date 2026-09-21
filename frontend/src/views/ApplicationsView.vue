@@ -12,10 +12,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { applicationApi, candidateApi, positionApi } from '../api'
-import { RESULT_LABEL, STAGES, STAGE_LABEL, STATUSES, STATUS_LABEL, STATUS_TYPE } from '../constants'
+import { applicationApi, candidateApi, positionApi, statsApi } from '../api'
+import { RESULT_LABEL, STAGES, STAGE_COLOR, STAGE_LABEL, STATUSES, STATUS_LABEL, STATUS_TYPE } from '../constants'
 import { fmtTime } from '../utils/format'
 import AIIntakeDialog from './AIIntakeDialog.vue'
+import StageTag from '../components/StageTag.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -77,7 +78,10 @@ watch(
   { deep: true, immediate: true },
 )
 
-onMounted(loadPositions)
+onMounted(() => {
+  loadPositions()
+  loadStageCounts() // 阶段轨的每关人数
+})
 
 // 组件被复用（比如从别的菜单页点回投递列表）时，上面那段初始化不会再跑一次，
 // 所以单独监听路由：每次进入这个页面，按「网址参数 → 上次存的」顺序把筛选补上。
@@ -117,6 +121,7 @@ async function advance(row, result) {
   await applicationApi.advance(row.id, row.current_stage, result)
   ElMessage.success(result === 'pass' ? `已通过「${STAGE_LABEL[row.current_stage]}」` : '已标记淘汰')
   await load()
+  loadStageCounts()
   refreshStats?.()
 }
 
@@ -129,6 +134,7 @@ async function revert(row) {
   await applicationApi.revert(row.id)
   ElMessage.success('已撤回')
   await load()
+  loadStageCounts()
   refreshStats?.()
 }
 
@@ -188,6 +194,7 @@ async function submitCreate() {
     ElMessage.success('投递已创建，当前在 AI 筛选阶段')
     createVisible.value = false
     await load()
+    loadStageCounts()
     refreshStats?.()
   } finally {
     creating.value = false
@@ -196,12 +203,31 @@ async function submitCreate() {
 
 const hasFilter = computed(() => filters.stage || filters.status || filters.pos_id)
 
+// ---- 阶段轨：8 关横排，各显示"当前卡在这一关的人数"，点一下即筛选 ----
+// 数据来自 /stats/overview 的 stage_counts（只统计进行中的），与顶部指标同源
+const stageCounts = ref({})
+async function loadStageCounts() {
+  try {
+    const d = await statsApi.overview()
+    stageCounts.value = Object.fromEntries((d.stage_counts || []).map((x) => [x.stage, x.count]))
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+const totalInPipeline = computed(() =>
+  Object.values(stageCounts.value).reduce((a, b) => a + b, 0),
+)
+function toggleStage(stage) {
+  filters.stage = filters.stage === stage ? '' : stage
+}
+
 // ---- AI 录入弹窗 ----
 const intakeVisible = ref(false)
 function onIntakeClosed() {
-  // AI 录完建了新投递，刷新列表和顶部统计
+  // AI 录完建了新投递，刷新列表、阶段轨与顶部统计
   load()
   loadPositions()
+  loadStageCounts()
   refreshStats?.()
 }
 </script>
@@ -220,68 +246,90 @@ function onIntakeClosed() {
       </div>
     </div>
 
-    <el-card shadow="never" class="filter-card">
-      <el-form inline>
-        <el-form-item label="阶段">
-          <el-select v-model="filters.stage" placeholder="全部" clearable style="width: 140px">
-            <el-option v-for="s in STAGES" :key="s.value" :label="s.label" :value="s.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 130px">
-            <el-option v-for="s in STATUSES" :key="s.value" :label="s.label" :value="s.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="岗位">
-          <el-select v-model="filters.pos_id" placeholder="全部" clearable filterable style="width: 200px">
-            <el-option v-for="p in positions" :key="p.id" :label="p.position_name" :value="p.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="hasFilter">
-          <el-button link @click="resetFilters">清空筛选</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
+    <!-- 阶段轨：8 关横排，色条按关卡加深；点一下筛选该关，再点取消 -->
+    <div class="pipeline">
+      <button
+        type="button"
+        class="pipe-all"
+        :class="{ 'is-active': !filters.stage }"
+        @click="filters.stage = ''"
+      >
+        全部
+        <span class="pipe-count">{{ totalInPipeline }}</span>
+      </button>
+      <button
+        v-for="s in STAGES"
+        :key="s.value"
+        type="button"
+        class="pipe-stop"
+        :class="{ 'is-active': filters.stage === s.value, 'is-empty': !stageCounts[s.value] }"
+        @click="toggleStage(s.value)"
+      >
+        <i class="pipe-bar" :style="{ background: STAGE_COLOR[s.value] }" />
+        <span class="pipe-name">{{ s.label }}</span>
+        <span class="pipe-count">{{ stageCounts[s.value] || 0 }}</span>
+      </button>
+    </div>
 
-    <el-card shadow="never">
-      <el-table :data="list" v-loading="loading" border :row-style="{ height: '52px' }" empty-text="暂无投递记录">
-        <el-table-column prop="candidate_name" label="候选人" min-width="120" />
-        <el-table-column prop="position_name" label="岗位" min-width="160" />
-        <el-table-column label="当前阶段" width="120">
-          <template #default="{ row }">
-            <el-tag effect="plain">{{ STAGE_LABEL[row.current_stage] || row.current_stage }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="STATUS_TYPE[row.overall_status]">{{ STATUS_LABEL[row.overall_status] }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="AI 结果" width="100">
-          <template #default="{ row }">
-            <el-tooltip v-if="row.ai_result" :content="row.ai_comment || '无理由'" placement="top" :show-after="300">
-              <el-tag size="small" :type="row.ai_result === 'pass' ? 'success' : 'danger'" effect="light">
-                {{ RESULT_LABEL[row.ai_result] }}
-              </el-tag>
-            </el-tooltip>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="更新时间" width="150">
-          <template #default="{ row }">{{ fmtTime(row.update_time) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="success" :disabled="row.overall_status !== 'pending'" @click="advance(row, 'pass')">通过</el-button>
-            <el-button link type="danger" :disabled="row.overall_status !== 'pending'" @click="advance(row, 'fail')">淘汰</el-button>
-            <el-button link type="warning" :disabled="!canRevert(row)" @click="revert(row)">撤回</el-button>
-            <el-button link @click="router.push({ name: 'application-detail', params: { id: row.id } })">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    <!-- 工具条：状态 / 岗位 / 清空（不再是卡片，减少层级） -->
+    <div class="toolbar">
+      <el-select v-model="filters.status" placeholder="全部状态" clearable size="small" style="width: 132px">
+        <el-option v-for="s in STATUSES" :key="s.value" :label="s.label" :value="s.value" />
+      </el-select>
+      <el-select v-model="filters.pos_id" placeholder="全部岗位" clearable filterable size="small" style="width: 200px">
+        <el-option v-for="p in positions" :key="p.id" :label="p.position_name" :value="p.id" />
+      </el-select>
+      <el-button v-if="hasFilter" link size="small" @click="resetFilters">清空筛选</el-button>
+      <span class="toolbar-count muted">共 {{ list.length }} 条</span>
+    </div>
 
-    <el-dialog v-model="createVisible" title="手动新建投递" width="520px" destroy-on-close>
+    <el-table :data="list" v-loading="loading" border :row-style="{ height: '50px' }" empty-text="这条筛选下还没有投递记录">
+      <el-table-column label="候选人" min-width="120">
+        <template #default="{ row }">
+          <el-link type="primary" :underline="false" @click="router.push({ name: 'application-detail', params: { id: row.id } })">
+            {{ row.candidate_name }}
+          </el-link>
+        </template>
+      </el-table-column>
+      <el-table-column prop="position_name" label="岗位" min-width="160" show-overflow-tooltip />
+      <el-table-column label="当前阶段" width="132">
+        <template #default="{ row }">
+          <StageTag :stage="row.current_stage" />
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="96">
+        <template #default="{ row }">
+          <el-tag :type="STATUS_TYPE[row.overall_status]" size="small" effect="light">
+            {{ STATUS_LABEL[row.overall_status] }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="AI 结果" width="96">
+        <template #default="{ row }">
+          <el-tooltip v-if="row.ai_result" :content="row.ai_comment || '无理由'" placement="top" :show-after="300">
+            <el-tag size="small" :type="row.ai_result === 'pass' ? 'success' : 'danger'" effect="plain">
+              {{ RESULT_LABEL[row.ai_result] }}
+            </el-tag>
+          </el-tooltip>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="更新时间" width="150">
+        <template #default="{ row }">
+          <span class="ats-nums">{{ fmtTime(row.update_time) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="200" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" :disabled="row.overall_status !== 'pending'" @click="advance(row, 'pass')">通过</el-button>
+          <el-button link type="danger" :disabled="row.overall_status !== 'pending'" @click="advance(row, 'fail')">淘汰</el-button>
+          <el-button link :disabled="!canRevert(row)" @click="revert(row)">撤回</el-button>
+          <el-button link @click="router.push({ name: 'application-detail', params: { id: row.id } })">详情</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <el-dialog v-model="createVisible" class="ats-dialog-narrow" title="手动新建投递" destroy-on-close>
       <el-form ref="createRef" :model="createForm" :rules="createRules" label-width="80px">
         <el-form-item label="候选人" prop="can_id">
           <div class="candidate-row">
@@ -324,15 +372,81 @@ function onIntakeClosed() {
 </template>
 
 <style scoped>
-.filter-card {
-  margin-bottom: 14px;
+/* ---- 阶段轨：本页的主视觉，把"8 关管线"直接做成筛选器 ---- */
+.pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--ats-radius);
+  padding: 4px;
+  margin-bottom: var(--ats-sp-3);
+  overflow-x: auto;
 }
-.filter-card :deep(.el-form-item) {
-  margin-bottom: 0;
+.pipe-stop,
+.pipe-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--ats-radius-sm);
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--ats-fs-note);
+  color: var(--el-text-color-regular);
+  white-space: nowrap;
+  transition: background-color 0.15s;
 }
-.muted {
+.pipe-stop:hover,
+.pipe-all:hover {
+  background: var(--el-fill-color-light);
+}
+.pipe-stop:focus-visible,
+.pipe-all:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: -2px;
+}
+.pipe-stop.is-active,
+.pipe-all.is-active {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-weight: var(--ats-fw-medium);
+}
+.pipe-stop.is-empty {
+  opacity: 0.5;
+}
+.pipe-bar {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  flex: none;
+}
+.pipe-count {
+  font-variant-numeric: var(--ats-nums);
+  font-weight: var(--ats-fw-medium);
   color: var(--el-text-color-secondary);
+  min-width: 16px;
+  text-align: right;
 }
+.pipe-stop.is-active .pipe-count,
+.pipe-all.is-active .pipe-count {
+  color: var(--el-color-primary);
+}
+
+/* ---- 工具条 ---- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ats-sp-2);
+  margin-bottom: var(--ats-sp-3);
+}
+.toolbar-count {
+  margin-left: auto;
+}
+
 .candidate-row,
 .new-candidate {
   display: flex;

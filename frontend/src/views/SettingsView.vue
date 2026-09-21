@@ -238,7 +238,7 @@ const helpVisible = ref(false)
     </el-card>
 
     <!-- 新建/编辑弹窗 -->
-    <el-dialog v-model="dialogVisible" :title="editingId === null ? '新建 AI 配置' : '编辑 AI 配置'" width="560px" destroy-on-close>
+    <el-dialog v-model="dialogVisible" class="ats-dialog-narrow" :title="editingId === null ? '新建 AI 配置' : '编辑 AI 配置'" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="配置名称" prop="name">
           <el-input v-model="form.name" placeholder="例：GLM免费版（自己认得就行）" maxlength="50" />
@@ -265,11 +265,6 @@ const helpVisible = ref(false)
 </template>
 
 <style scoped>
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 .help {
   background: var(--el-fill-color-lighter);
   border-radius: 8px;
@@ -287,9 +282,6 @@ const helpVisible = ref(false)
   border: 1px solid var(--el-border-color-lighter);
   padding: 6px 10px;
   text-align: left;
-}
-.muted {
-  color: var(--el-text-color-secondary);
 }
 /* 锁定的回答格式说明：灰底只读，让人一看就知道"这部分不用管、也改不了" */
 .format-box {

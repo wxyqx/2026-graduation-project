@@ -10,7 +10,7 @@ import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { exportFields, exportFile, positionApi, settingsApi, statsApi } from '../api'
-import { STAGES, STAGE_LABEL, STATUSES } from '../constants'
+import { STAGES, STAGE_COLOR, STAGE_LABEL, STATUSES } from '../constants'
 import { downloadBlob } from '../utils/download'
 
 const router = useRouter()
@@ -64,23 +64,34 @@ async function loadStats() {
 }
 onMounted(loadStats)
 
+// 关键数字：从「5 张同构卡片」改成一行紧凑指标，把版面让给下面的漏斗
 const statCards = computed(() => {
   const s = stats.value
   if (!s) return []
   return [
-    { label: '在招岗位', value: s.position_count, icon: 'Briefcase', color: '#409eff' },
-    { label: '进行中', value: s.pending_count, icon: 'Loading', color: '#e6a23c' },
-    { label: '已录用', value: s.pass_count, icon: 'CircleCheck', color: '#67c23a' },
-    { label: '已淘汰', value: s.fail_count, icon: 'CircleClose', color: '#f56c6c' },
-    { label: '本月录用', value: s.month_hired, icon: 'Calendar', color: '#909399' },
+    { label: '在招岗位', value: s.position_count },
+    { label: '进行中', value: s.pending_count },
+    { label: '已录用', value: s.pass_count, tone: 'ok' },
+    { label: '已淘汰', value: s.fail_count, tone: 'bad' },
+    { label: '本月录用', value: s.month_hired },
   ]
 })
 
-// 8 关分布条：算好每关的百分比宽度
-const maxStageCount = computed(() => Math.max(1, ...(stats.value?.stage_counts.map((x) => x.count) || [0])))
-function stagePct(count) {
-  return Math.round((count / maxStageCount.value) * 100)
-}
+// 漏斗：按 8 关给出「走到这一关及以后」的人数，逐关收窄，深浅即进度
+// 数据源是 /stats/overview 的 stage_counts（当前停在某一关的人数），
+// 从最后一关往前累加，得到「至少走到这一关」的人数
+const funnel = computed(() => {
+  const list = stats.value?.stage_counts || []
+  if (!list.length) return []
+  const out = []
+  let acc = 0
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    acc += list[i].count
+    out.unshift({ ...list[i], reached: acc })
+  }
+  const top = out[0]?.reached || 1
+  return out.map((x, i) => ({ ...x, index: i, pct: Math.round((x.reached / top) * 100) }))
+})
 
 // ---- 阶段 × 岗位 交叉汇总表（周报那种表）----
 const RANGES = [
@@ -283,57 +294,60 @@ async function doExport() {
   <div>
     <div class="page-header"><h2>汇总导出</h2></div>
 
-    <!-- 统计卡：5 张平均占满一行 -->
-    <div class="stat-cards">
-      <el-card v-for="c in statCards" :key="c.label" shadow="never" class="stat-card">
-        <div class="stat-inner">
-          <el-icon :size="30" :style="{ color: c.color }"><component :is="c.icon" /></el-icon>
-          <div>
-            <div class="stat-value">{{ c.value }}</div>
-            <div class="stat-label">{{ c.label }}</div>
-          </div>
-        </div>
-      </el-card>
+    <!-- 关键数字：一行紧凑指标（不再是 5 张同构卡片） -->
+    <div class="metrics">
+      <div v-for="c in statCards" :key="c.label" class="metric" :class="c.tone ? `is-${c.tone}` : ''">
+        <span class="metric-value">{{ c.value }}</span>
+        <span class="metric-label">{{ c.label }}</span>
+      </div>
     </div>
 
-    <el-row :gutter="14">
-      <el-col :span="10">
-        <!-- 各关人数分布 -->
-        <el-card shadow="never">
-          <template #header>各阶段进行中人数</template>
-          <div v-for="s in stats?.stage_counts || []" :key="s.stage" class="stage-bar">
-            <span class="stage-name">{{ s.label }}</span>
-            <div class="stage-track">
-              <div class="stage-fill" :style="{ width: stagePct(s.count) + '%' }" />
-            </div>
-            <span class="stage-count">{{ s.count }}</span>
+    <div class="top-grid">
+      <!-- 漏斗：整个汇总页的首页元素，一眼看出堵在哪一关 -->
+      <section class="panel funnel-panel">
+        <h3>招聘漏斗</h3>
+        <p class="funnel-note muted">每条的人数 = 走到这一关及以后的人（越往下越窄，窄得快的那一关就是堵点）</p>
+        <div v-for="f in funnel" :key="f.stage" class="funnel-row">
+          <span class="funnel-name">{{ f.label }}</span>
+          <div class="funnel-track">
+            <div
+              class="funnel-fill"
+              :style="{ width: Math.max(f.pct, 2) + '%', background: STAGE_COLOR[f.stage] }"
+            />
           </div>
-          <div v-if="!stats?.stage_counts?.some((s) => s.count)" class="muted">
-            暂无进行中的投递
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="14">
-        <!-- 按岗位分组 -->
-        <el-card shadow="never">
-          <template #header>按岗位统计</template>
-          <el-table :data="stats?.by_position || []" size="small" empty-text="暂无岗位">
-            <el-table-column prop="position_name" label="岗位" min-width="160" />
-            <el-table-column prop="pending" label="进行中" width="90" align="center" />
-            <el-table-column prop="pass" label="已录用" width="90" align="center" />
-            <el-table-column prop="fail" label="已淘汰" width="90" align="center" />
-            <el-table-column prop="total" label="合计" width="80" align="center" />
-          </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+          <span class="funnel-count">
+            <b>{{ f.reached }}</b>
+            <span class="funnel-now" :title="`当前正停在这一关：${f.count} 人`">＋{{ f.count }}</span>
+          </span>
+        </div>
+        <div v-if="!funnel.some((f) => f.reached)" class="muted">暂无进行中的投递</div>
+      </section>
+
+      <section class="panel">
+        <h3>按岗位统计</h3>
+        <el-table :data="stats?.by_position || []" size="small" empty-text="暂无岗位">
+          <el-table-column prop="position_name" label="岗位" min-width="150" show-overflow-tooltip />
+          <el-table-column label="进行中" width="82" align="right">
+            <template #default="{ row }"><span class="ats-nums">{{ row.pending }}</span></template>
+          </el-table-column>
+          <el-table-column label="已录用" width="82" align="right">
+            <template #default="{ row }"><span class="ats-nums">{{ row.pass }}</span></template>
+          </el-table-column>
+          <el-table-column label="已淘汰" width="82" align="right">
+            <template #default="{ row }"><span class="ats-nums">{{ row.fail }}</span></template>
+          </el-table-column>
+          <el-table-column label="合计" width="72" align="right">
+            <template #default="{ row }"><b class="ats-nums">{{ row.total }}</b></template>
+          </el-table-column>
+        </el-table>
+      </section>
+    </div>
 
     <!-- 阶段 × 岗位 交叉汇总表 -->
-    <el-card shadow="never" style="margin-top: 14px">
-      <template #header>
-        <div class="card-header">
-          <span>阶段 × 岗位汇总</span>
-          <div class="matrix-tools">
+    <section class="panel" style="margin-top: var(--ats-sp-4)">
+      <div class="card-header">
+        <h3>阶段 × 岗位汇总</h3>
+        <div class="matrix-tools">
             <el-radio-group v-model="matrixRange.range" size="small" @change="reloadAll">
               <el-radio-button v-for="r in RANGES" :key="r.value" :value="r.value">{{ r.label }}</el-radio-button>
             </el-radio-group>
@@ -347,7 +361,6 @@ async function doExport() {
             </el-button>
           </div>
         </div>
-      </template>
 
       <div class="matrix-hint">
         数字 = 所选时间范围内<b>通过了这一关</b>或<b>正停在这一关</b>的人数（在这一关被淘汰的不算）。
@@ -382,13 +395,12 @@ async function doExport() {
         <span v-for="(n, i) in matrix.col_totals" :key="i" class="mt-cell">{{ n }}</span>
         <span class="mt-cell mt-grand">{{ matrix.grand_total }}</span>
       </div>
-    </el-card>
+    </section>
 
     <!-- 进行中的候选人所处阶段 -->
-    <el-card shadow="never" style="margin-top: 14px">
-      <template #header>
-        <div class="card-header">
-          <span>{{ matrix?.range_label || '本周' }}进行中的候选人所处阶段</span>
+    <section class="panel" style="margin-top: var(--ats-sp-4)">
+      <div class="card-header">
+        <h3>{{ matrix?.range_label || '本周' }}进行中的候选人所处阶段</h3>
           <div class="matrix-tools">
             <span class="muted">阶段</span>
             <el-select
@@ -408,7 +420,6 @@ async function doExport() {
             </el-button>
           </div>
         </div>
-      </template>
 
       <div class="matrix-hint">
         时间范围与上方交叉表一致。阶段可点开改写（如「待offer回传」「待入职 1.11」），改过的显示「手动」标记。
@@ -448,10 +459,10 @@ async function doExport() {
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </section>
 
     <!-- 点格子看名单 -->
-    <el-dialog v-model="cellVisible" :title="cellData ? `${cellData.row_label} × ${cellData.position_label}（${cellData.count} 人）` : '明细'" width="640px">
+    <el-dialog v-model="cellVisible" class="ats-dialog-wide" :title="cellData ? `${cellData.row_label} × ${cellData.position_label}（${cellData.count} 人）` : '明细'">
       <el-table :data="cellData?.people || []" v-loading="cellLoading" border size="small" empty-text="这一格没有人">
         <el-table-column prop="name" label="姓名" width="130" />
         <el-table-column label="现在所处" min-width="130">
@@ -478,10 +489,9 @@ async function doExport() {
       </template>
     </el-dialog>
 
-
     <!-- 导出面板 -->
-    <el-card shadow="never" style="margin-top: 14px">
-      <template #header>导出投递记录</template>
+    <section class="panel" style="margin-top: var(--ats-sp-4)">
+      <h3>导出投递记录</h3>
 
       <el-form label-width="80px">
         <el-form-item label="数据范围">
@@ -534,62 +544,108 @@ async function doExport() {
       </el-form>
 
       <el-alert type="info" :closable="false" show-icon title="按指定格式导出（模板对接）预留：等你提供标准 Excel 模板后实现，现在先用手选字段导出。" />
-    </el-card>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.stat-cards {
+/* ---- 关键数字：一行紧凑指标 ---- */
+.metrics {
   display: flex;
-  gap: 14px;
-  margin-bottom: 14px;
+  gap: var(--ats-sp-6);
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--ats-radius);
+  padding: var(--ats-sp-3) var(--ats-sp-4);
+  margin-bottom: var(--ats-sp-4);
 }
-.stat-card {
-  flex: 1; /* 每张平分整行宽度 */
-  min-width: 0;
-}
-.stat-inner {
+.metric {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: baseline;
+  gap: var(--ats-sp-2);
 }
-.stat-value {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.2;
+.metric-value {
+  font-size: var(--ats-fs-stat);
+  font-weight: var(--ats-fw-bold);
+  font-variant-numeric: var(--ats-nums);
+  line-height: 1.1;
+  color: var(--el-text-color-primary);
 }
-.stat-label {
-  font-size: 13px;
+.metric-label {
+  font-size: var(--ats-fs-label);
   color: var(--el-text-color-secondary);
 }
-.stage-bar {
+.metric.is-ok .metric-value {
+  color: var(--el-color-success);
+}
+.metric.is-bad .metric-value {
+  color: var(--el-color-danger);
+}
+
+/* ---- 顶部分栏：漏斗在左（更宽，它是主视觉）、按岗位统计在右 ---- */
+.top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--ats-sp-4);
+  margin-bottom: var(--ats-sp-4);
+}
+.panel {
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--ats-radius);
+  padding: var(--ats-sp-4);
+}
+.panel h3 {
+  margin: 0 0 var(--ats-sp-3);
+  font-size: var(--ats-fs-card);
+  font-weight: var(--ats-fw-medium);
+}
+.funnel-note {
+  margin: -8px 0 var(--ats-sp-3);
+}
+
+/* ---- 漏斗 ---- */
+.funnel-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--ats-sp-3);
+  margin-bottom: 6px;
 }
-.stage-name {
-  width: 70px;
-  font-size: 13px;
+.funnel-name {
+  width: 68px;
+  flex: none;
+  font-size: var(--ats-fs-note);
   color: var(--el-text-color-regular);
 }
-.stage-track {
+.funnel-track {
   flex: 1;
-  height: 14px;
-  background: var(--el-fill-color-light);
-  border-radius: 7px;
+  height: 16px;
+  background: var(--ats-track);
+  border-radius: 3px;
   overflow: hidden;
 }
-.stage-fill {
+/* 色条宽度 = 到达人数占比；颜色按关卡加深，宽度收窄本身就是信息 */
+.funnel-fill {
   height: 100%;
-  background: var(--el-color-primary);
-  border-radius: 7px;
+  border-radius: 3px;
   transition: width 0.3s;
 }
-.stage-count {
-  width: 24px;
+.funnel-count {
+  width: 74px;
+  flex: none;
   text-align: right;
-  font-weight: 600;
+  font-size: var(--ats-fs-note);
+}
+.funnel-count b {
+  font-variant-numeric: var(--ats-nums);
+  font-size: var(--ats-fs-body);
+}
+/* 「当前正停在这一关」的人数，用浅色副标区分于累计值 */
+.funnel-now {
+  margin-left: 4px;
+  font-size: var(--ats-fs-label);
+  color: var(--el-text-color-placeholder);
+  font-variant-numeric: var(--ats-nums);
 }
 .filters {
   display: flex;
@@ -611,16 +667,7 @@ async function doExport() {
   color: var(--el-text-color-secondary);
   margin-bottom: 4px;
 }
-.muted {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
 /* 阶段 × 岗位汇总 */
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 .matrix-tools {
   display: flex;
   align-items: center;

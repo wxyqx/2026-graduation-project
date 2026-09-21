@@ -128,7 +128,7 @@ async function remove(row) {
       </div>
     </div>
 
-    <el-card shadow="never">
+    <section class="panel">
       <el-table
         :data="list"
         v-loading="loading"
@@ -167,7 +167,9 @@ async function remove(row) {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="application_count" label="投递数" width="90" align="center" />
+        <el-table-column label="投递数" width="90" align="right">
+          <template #default="{ row }"><span class="ats-nums">{{ row.application_count }}</span></template>
+        </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -175,15 +177,14 @@ async function remove(row) {
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </section>
 
     <el-dialog
       v-model="dialogVisible"
       :title="editingId === null ? '新建岗位' : '编辑岗位'"
-      width="1120px"
+      class="ats-dialog-full position-dialog"
       top="6vh"
       destroy-on-close
-      class="position-dialog"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="岗位名称" prop="position_name">
@@ -225,9 +226,6 @@ async function remove(row) {
 </template>
 
 <style scoped>
-.muted {
-  color: var(--el-text-color-secondary);
-}
 /* 弹窗右下角可拖拽调整大小（拉宽 / 拉高），最小尺寸与最大尺寸做了限制避免拉坏 */
 :deep(.el-dialog) {
   resize: both;
@@ -246,10 +244,6 @@ async function remove(row) {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.muted {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
 }
 .extra-hint {
   font-size: 12px;

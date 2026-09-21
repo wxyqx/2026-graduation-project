@@ -127,7 +127,7 @@ async function remove(row) {
       </el-form>
     </el-card>
 
-    <el-card shadow="never">
+    <section class="panel">
       <el-table :data="list" v-loading="loading" border empty-text="没有符合条件的候选人">
         <el-table-column label="姓名" min-width="130">
           <template #default="{ row }">
@@ -140,7 +140,7 @@ async function remove(row) {
         <el-table-column label="名下投递" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="row.application_count > 0 ? 'primary' : 'info'" size="small" effect="plain">
-              {{ row.application_count }} 条
+              <span class="ats-nums">{{ row.application_count }}</span> 条
             </el-tag>
           </template>
         </el-table-column>
@@ -154,7 +154,7 @@ async function remove(row) {
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </section>
 
     <!-- 候选人详情抽屉 -->
     <el-drawer v-model="drawerVisible" :title="detail ? `候选人：${detail.name}` : '候选人详情'" size="620px">
@@ -206,16 +206,6 @@ async function remove(row) {
 </template>
 
 <style scoped>
-.filter-card {
-  margin-bottom: 14px;
-}
-.filter-card :deep(.el-form-item) {
-  margin-bottom: 0;
-}
-.muted {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
 .section-title {
   margin: 18px 0 8px;
   font-weight: 600;

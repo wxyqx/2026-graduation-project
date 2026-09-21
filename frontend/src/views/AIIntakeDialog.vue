@@ -132,7 +132,7 @@ function close() {
   <el-dialog
     :model-value="visible"
     title="AI 录入简历"
-    width="720px"
+    class="ats-dialog-wide"
     destroy-on-close
     :close-on-click-modal="false"
     @close="close"
@@ -305,9 +305,5 @@ function close() {
   justify-content: flex-end;
   gap: 8px;
   margin-bottom: 8px;
-}
-.muted {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
 }
 </style>
