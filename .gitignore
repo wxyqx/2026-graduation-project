@@ -1,15 +1,38 @@
-# Python
+# ===== Python =====
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
 
-# Node
+# ===== Node =====
 node_modules/
-frontend/vite.log
-frontend/dist/
+dist/
+dist-ssr/
+*.local
 
-# 环境配置（含密码，不入库）
-backend/.env
+# ===== 环境配置（含密码，不入库） =====
+.env
+.env.*
+!.env.example
 
-# 运行日志
+# ===== 运行日志 =====
 *.log
+npm-debug.log*
+vite.log
+
+# ===== 编辑器 / 系统 =====
+.vscode/*
+!.vscode/extensions.json
+.idea/
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ===== Office 临时文件 =====
+~$*
+
+# ===== ZCode 工作区配置与素材（含候选人隐私，不入库） =====
+.zcode/
+.zcodeignore

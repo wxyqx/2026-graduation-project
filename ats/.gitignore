@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+frontend/vite.log
+frontend/dist/
+
+# 环境配置（含密码，不入库）
+backend/.env
+
+# 运行日志
+*.log
+
+# ZCode 工作区配置与面试评价素材（含候选人隐私，不入库）
+.zcode/
