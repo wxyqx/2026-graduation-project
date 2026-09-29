@@ -127,8 +127,11 @@ async function renameCandidate() {
 }
 
 // ---- 各关记录（可编辑的结果原因 / 面试评价）----
-// 只列「已出结果」的人工关；ai 关有独立面板，它的理由由 AI 生成、不可手改
-const noteStages = computed(() => (app.value?.stages || []).filter((s) => s.result && s.stage !== 'ai'))
+// 列出「已出结果的人工关」+「正在进行中的当前关」——进行中也能先写（面试完就记评价，之后再定通过/淘汰）。
+// ai 关不在此列，它有独立面板，理由由 AI 生成、不可手改。
+const noteStages = computed(() =>
+  (app.value?.stages || []).filter((s) => s.stage !== 'ai' && (s.result || s.is_current)),
+)
 
 const noteDialog = ref({ visible: false, stage: '', result: '', reason: '', evaluation: '' })
 function openNote(s) {
@@ -246,9 +249,10 @@ async function onNoteSaved() {
             <div class="note-head">
               <span class="note-dot" :style="{ background: STAGE_COLOR[s.stage] }" />
               <span class="note-stage">{{ s.label }}</span>
-              <el-tag size="small" effect="light" :type="s.result === 'pass' ? 'success' : 'danger'">
+              <el-tag v-if="s.result" size="small" effect="light" :type="s.result === 'pass' ? 'success' : 'danger'">
                 {{ RESULT_LABEL[s.result] }}
               </el-tag>
+              <span v-else class="note-current">进行中</span>
               <span v-if="s.time" class="muted ats-nums">{{ fmtTime(s.time) }}</span>
               <el-button class="note-edit" link type="primary" size="small" @click="openNote(s)">编辑</el-button>
             </div>
@@ -266,7 +270,7 @@ async function onNoteSaved() {
             </div>
           </div>
         </div>
-        <p v-else class="muted note-empty">还没有完成任何阶段。推进流程后，可在这里补写各关原因与面试评价。</p>
+        <p v-else class="muted note-empty">还没有可记录的阶段（AI 筛选的理由见上方）。推进到人工环节后，可在这里写原因与面试评价。</p>
       </section>
     </template>
 
@@ -478,6 +482,11 @@ async function onNoteSaved() {
 }
 .note-edit {
   margin-left: auto;
+}
+/* 进行中的当前关：没有通过/淘汰标签，用主色文字标出「还没定」 */
+.note-current {
+  font-size: var(--ats-fs-label);
+  color: var(--el-color-primary);
 }
 .note-field {
   display: flex;

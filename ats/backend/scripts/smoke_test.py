@@ -202,6 +202,24 @@ def run():
     check(sn(a1, "nope", reason="x").status_code == 400, "非法 stage 400")
     check(sn(a2, "resume", reason="x").status_code == 400, "未进行阶段写记录 400")
     check(c.put(f"/api/applications/{a1}/stage-note", json={"stage": "pro", "reason": "x"}).status_code == 401, "未登录写记录 401")
+
+    # 进行中的当前关也能先写（还没打分），但更靠后的关仍不可写
+    r = c.post("/api/candidates", headers=H, json={"name": f"进行中记录_{STAMP}"})
+    nc = r.json()["id"]; created["candidates"].append(nc)
+    r = c.post("/api/applications", headers=H, json={"can_id": nc, "pos_id": p2})
+    na = r.json()["id"]; created["applications"].append(na)
+    d = adv(na, "ai", "pass").json()  # ai pass → 当前关 resume，且 resume 未打分
+    check(d["current_stage"] == "resume" and {s["stage"]: s for s in d["stages"]}["resume"]["result"] is None, "新投递推进后停在 resume（未打分）")
+    r = sn(na, "resume", reason="进行中先记一笔，面试完再定")
+    check(r.status_code == 200 and r.json()["stages"][1]["reason"] == "进行中先记一笔，面试完再定", "进行中的当前关可先写原因")
+    check(sn(na, "phone", reason="x").status_code == 400, "更靠后的未到达关仍不可写 400")
+    check(sn(na, "ai", reason="x").status_code == 400, "进行中时 ai 关仍不可写 400")
+    # 进行中写下的记录，在打 pass 后保留（不会因推进而丢）
+    d = adv(na, "resume", "pass").json()
+    check({s["stage"]: s for s in d["stages"]}["resume"]["reason"] == "进行中先记一笔，面试完再定", "推进后进行中写的记录保留")
+    # 但撤回该关会把它清掉
+    d = rev(na).json()
+    check({s["stage"]: s for s in d["stages"]}["resume"]["reason"] is None, "撤回后清掉（含进行中写下的）")
     # 撤回该关 → 原因与面试评价一并清空
     d = rev(a1).json()  # a1 现为 final/pass(已录用)，撤回 → final/pending，清 final 记录
     st = {s["stage"]: s for s in d["stages"]}

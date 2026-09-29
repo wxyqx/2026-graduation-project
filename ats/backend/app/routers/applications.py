@@ -261,12 +261,17 @@ def revert(app_id: AppId, body: RevertIn, db: Session = Depends(get_db)):
 def save_stage_note(app_id: AppId, body: StageNoteIn, db: Session = Depends(get_db)):
     """给某一关补写「结果原因」/「面试评价」
 
-**干什么用**：在投递详情页，给已经出结果的关卡补一段文字记录——为什么通过 / 为什么淘汰，
+**干什么用**：在投递详情页，给某一关补一段文字记录——为什么通过 / 为什么淘汰，
 面试关还可以把面试评价写进去。纯记录，**不改流程状态**（推进 / 淘汰仍然走 advance）。
+
+**什么时候能写**：
+- 出过结果的关：随时可改（通过、淘汰都能补写）
+- **正在进行的当前关：还没打分也能先写**（面试完当下就把评价记下，之后再决定通过 / 淘汰）
+- 还没走到的关：不能写（写了对不上号）
 
 **怎么填**：
 - `stage`：要写哪一关（`resume` 简历筛选 / `phone` 电话沟通 / `test` 笔试 / `pro` 专业面 / `hr` HR面 / `final` 终面）。
-- `reason`：结果原因，通过或淘汰都能写。
+- `reason`：结果原因（进行中的关可先记评估要点），通过或淘汰都能写。
 - `evaluation`：面试评价，只有电话沟通 / 专业面 / HR面 / 终面有；简历筛选与笔试传了会被拒。
 - 两个都可留空，传空字符串 = 清空该项。
 
@@ -274,7 +279,7 @@ def save_stage_note(app_id: AppId, body: StageNoteIn, db: Session = Depends(get_
 
 **可能出错**：
 - 400：`stage` 不是 6 个合法值之一 / `stage` 传了 `ai`（AI 理由不可手改）/
-  这一关还没出结果（没到过的关不能写）/ 给简历筛选或笔试传了面试评价
+  这一关还没走到（既没结果也不是当前关）/ 给简历筛选或笔试传了面试评价
 - 404：没有这个投递
 
 **注意**：撤回这一关时，这里写的原因与面试评价会被一并清空（当作没发生过）。
@@ -287,9 +292,9 @@ def save_stage_note(app_id: AppId, body: StageNoteIn, db: Session = Depends(get_
     reason_field, evaluation_field = sm.STAGE_NOTE_FIELDS[body.stage]
     if not reason_field:
         raise HTTPException(status_code=400, detail="该阶段没有可填写的记录项")
-    # 没出过结果的关先别写：那说明还没走到这一关（或已被撤回），写了也对不上号
-    if not sm.stage_has_result(a, body.stage):
-        raise HTTPException(status_code=400, detail="该阶段尚未进行，不能填写原因")
+    # 出过结果的关、或正在进行的当前关，都能写；还没走到的关写了对不上号，拒绝
+    if not sm.stage_is_writable(a, body.stage):
+        raise HTTPException(status_code=400, detail="该阶段尚未进行，不能填写")
     if body.evaluation and not evaluation_field:
         raise HTTPException(status_code=400, detail="该阶段没有面试评价项（仅面试环节可填）")
     sm.save_stage_note(a, body.stage, body.reason, body.evaluation)

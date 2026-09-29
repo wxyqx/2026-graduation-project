@@ -96,6 +96,16 @@ def stage_has_result(app: Application, stage: str) -> bool:
     return bool(result_field and getattr(app, result_field, None))
 
 
+def stage_is_writable(app: Application, stage: str) -> bool:
+    """这一关现在能不能写「原因 / 面试评价」：
+
+    - 出过结果的关：随时可改（通过 / 淘汰都能补写）
+    - 正在进行的当前关：还没打分也能**先写着**（面试完当下就把评价记下，之后再决定通过 / 淘汰）
+    - 还没走到的关（未来的关）：不能写 —— 写了对不上号
+    """
+    return stage_has_result(app, stage) or stage == app.current_stage
+
+
 def save_stage_note(app: Application, stage: str, reason: str | None, evaluation: str | None) -> None:
     """保存某一关的原因 / 面试评价（全在详情页手动编辑，不改变流程状态）。
 
@@ -132,6 +142,7 @@ def revert(app: Application, to_stage: str | None, now: datetime) -> None:
 
     - 已淘汰/已录用：终局结果写在当前阶段，撤回即清掉该结果、停留原阶段、恢复 pending
     - 进行中：当前阶段尚无结果，撤回回到上一阶段并清掉上一阶段结果（那才是上一步决定）
+              ——当前关随之作废，进行中写下的原因 / 评价也一并清掉，免得留下对不上号的记录
     - 指定 toStage：回到该阶段，清掉 toStage 及其后所有阶段数据，重新从 toStage 开始
 
     举例：走到 phone 关被打了 fail → 撤回 → 擦掉 phone 的成绩，还在 phone 关，状态回到进行中。
@@ -151,6 +162,7 @@ def revert(app: Application, to_stage: str | None, now: datetime) -> None:
                 raise ValueError("第一阶段（AI筛选）不可再撤回")  # 已经在第一关且没打分，没有上一步可撤
             target = STAGES[cur_idx - 1]
             clear_stage(app, target)
+            clear_stage(app, current)  # 退回后当前关就作废了，进行中写下的记录一并清掉
     else:
         # 指定退到某一关
         if to_stage not in STAGES:

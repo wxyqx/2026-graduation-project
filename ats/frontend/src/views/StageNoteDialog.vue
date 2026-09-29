@@ -35,12 +35,12 @@ const visible = computed({
 
 const stageLabel = computed(() => STAGE_LABEL[props.stage] || props.stage)
 const hasEvaluation = computed(() => stageHasEvaluation(props.stage))
-// 提示语跟着结果走：通过就写通过原因，淘汰就写淘汰原因
-const reasonPlaceholder = computed(() =>
-  props.result === 'fail'
-    ? '写清楚这一关为什么淘汰，例如：学历不符 / 笔试分数偏低 / 团队匹配度不足……'
-    : '写清楚这一关为什么通过，例如：本科+3年相关经验，符合岗位要求……',
-)
+// 提示语跟着结果走：通过写通过原因，淘汰写淘汰原因，还没打分（进行中）就先记评估要点
+const reasonPlaceholder = computed(() => {
+  if (props.result === 'fail') return '写清楚这一关为什么淘汰，例如：学历不符 / 笔试分数偏低 / 团队匹配度不足……'
+  if (props.result === 'pass') return '写清楚这一关为什么通过，例如：本科+3 年相关经验，符合岗位要求……'
+  return '这一关还在进行中，可先记评估要点或面试反馈，之后再决定通过 / 淘汰。'
+})
 // 色标：让弹窗抬头与详情页管线里的同一个阶段看起来是「同一关」
 const stageColor = computed(() => `var(--ats-stage-${(STAGE_INDEX[props.stage] ?? 0) + 1})`)
 
@@ -106,6 +106,7 @@ async function generateEvaluation() {
       <el-tag v-if="result" size="small" effect="light" :type="result === 'pass' ? 'success' : 'danger'">
         {{ RESULT_LABEL[result] }}
       </el-tag>
+      <el-tag v-else size="small" effect="light" type="primary">进行中</el-tag>
       <span class="muted">记录只作留痕，不会改变流程状态</span>
     </div>
 
