@@ -5,6 +5,7 @@
   GET  /api/applications/{id}                     详情（含 7 关时间线）
   POST /api/applications/{id}/advance             推进：给当前关打分（pass / fail）
   POST /api/applications/{id}/revert              撤回上一步
+  PUT  /api/applications/{id}/stage-note          给某一关补写原因 / 面试评价（不改流程）
 
 推进、撤回的具体规则不在这里，在 services/state_machine.py。这里只做检查和调用。
 """
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import Application, Candidate, Position
-from app.schemas.application import AdvanceIn, ApplicationCreate, RevertIn
+from app.schemas.application import AdvanceIn, ApplicationCreate, RevertIn, StageNoteIn
 from app.services import positions as positions_svc
 from app.services import state_machine as sm
 from app.services.views import application_detail, application_summary
@@ -251,6 +252,47 @@ def revert(app_id: AppId, body: RevertIn, db: Session = Depends(get_db)):
     except ValueError as e:
         # 状态机用 ValueError 表示「这样退不合规矩」（比如第一关没法再退），这里翻译成 400 给前端
         raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    db.refresh(a)
+    return application_detail(a)
+
+
+@router.put("/{app_id}/stage-note")
+def save_stage_note(app_id: AppId, body: StageNoteIn, db: Session = Depends(get_db)):
+    """给某一关补写「结果原因」/「面试评价」
+
+**干什么用**：在投递详情页，给已经出结果的关卡补一段文字记录——为什么通过 / 为什么淘汰，
+面试关还可以把面试评价写进去。纯记录，**不改流程状态**（推进 / 淘汰仍然走 advance）。
+
+**怎么填**：
+- `stage`：要写哪一关（`resume` 简历筛选 / `phone` 电话沟通 / `test` 笔试 / `pro` 专业面 / `hr` HR面 / `final` 终面）。
+- `reason`：结果原因，通过或淘汰都能写。
+- `evaluation`：面试评价，只有电话沟通 / 专业面 / HR面 / 终面有；简历筛选与笔试传了会被拒。
+- 两个都可留空，传空字符串 = 清空该项。
+
+**返回什么**：保存后的完整详情（和 GET /{id} 一样）。
+
+**可能出错**：
+- 400：`stage` 不是 6 个合法值之一 / `stage` 传了 `ai`（AI 理由不可手改）/
+  这一关还没出结果（没到过的关不能写）/ 给简历筛选或笔试传了面试评价
+- 404：没有这个投递
+
+**注意**：撤回这一关时，这里写的原因与面试评价会被一并清空（当作没发生过）。
+"""
+    a = _get_or_404(db, app_id)
+    if body.stage not in sm.STAGES:
+        raise HTTPException(status_code=400, detail="stage 不是合法阶段值")
+    if body.stage == "ai":
+        raise HTTPException(status_code=400, detail="AI 筛选的理由由 AI 生成，不能手动填写")
+    reason_field, evaluation_field = sm.STAGE_NOTE_FIELDS[body.stage]
+    if not reason_field:
+        raise HTTPException(status_code=400, detail="该阶段没有可填写的记录项")
+    # 没出过结果的关先别写：那说明还没走到这一关（或已被撤回），写了也对不上号
+    if not sm.stage_has_result(a, body.stage):
+        raise HTTPException(status_code=400, detail="该阶段尚未进行，不能填写原因")
+    if body.evaluation and not evaluation_field:
+        raise HTTPException(status_code=400, detail="该阶段没有面试评价项（仅面试环节可填）")
+    sm.save_stage_note(a, body.stage, body.reason, body.evaluation)
     db.commit()
     db.refresh(a)
     return application_detail(a)

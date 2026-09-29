@@ -14,7 +14,7 @@ overall_status ：整体状态——pending 还在闯 / pass 全部通关（录�
 """
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -47,6 +47,21 @@ class Application(Base):
     hr_result: Mapped[str | None] = mapped_column(String(20))
     final_time: Mapped[datetime | None] = mapped_column(DateTime)  # 第 7 关 终面
     final_result: Mapped[str | None] = mapped_column(String(20))
+
+    # ---- 各关「人工记录」（v3.14 新增，全部可空）----
+    # 原因：这关为什么通过 / 为什么淘汰（简历筛选 / 笔试 / 三个面试关都有）
+    # 评价：面试评价正文，只有三个面试关（电话沟通 / 专业面 / HR面 / 终面）有
+    # ai 这关不在此列，它的理由沿用上面的 ai_comment（由 AI 生成）
+    resume_reason: Mapped[str | None] = mapped_column(Text)
+    phone_reason: Mapped[str | None] = mapped_column(Text)
+    phone_evaluation: Mapped[str | None] = mapped_column(Text)
+    test_reason: Mapped[str | None] = mapped_column(Text)
+    pro_reason: Mapped[str | None] = mapped_column(Text)
+    pro_evaluation: Mapped[str | None] = mapped_column(Text)
+    hr_reason: Mapped[str | None] = mapped_column(Text)
+    hr_evaluation: Mapped[str | None] = mapped_column(Text)
+    final_reason: Mapped[str | None] = mapped_column(Text)
+    final_evaluation: Mapped[str | None] = mapped_column(Text)
 
     # ---- 整体进度 ----
     current_stage: Mapped[str | None] = mapped_column(String(20))  # 当前在第几关

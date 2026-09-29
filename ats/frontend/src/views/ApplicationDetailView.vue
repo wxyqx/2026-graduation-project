@@ -13,8 +13,9 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { applicationApi, candidateApi } from '../api'
-import { RESULT_LABEL, STAGE_COLOR, STAGE_LABEL, STATUS_LABEL, STATUS_TYPE } from '../constants'
+import { RESULT_LABEL, STAGE_COLOR, STAGE_LABEL, STATUS_LABEL, STATUS_TYPE, stageHasEvaluation } from '../constants'
 import { fmtTime } from '../utils/format'
+import StageNoteDialog from './StageNoteDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -124,6 +125,25 @@ async function renameCandidate() {
   await load()
   refreshStats?.()
 }
+
+// ---- 各关记录（可编辑的结果原因 / 面试评价）----
+// 只列「已出结果」的人工关；ai 关有独立面板，它的理由由 AI 生成、不可手改
+const noteStages = computed(() => (app.value?.stages || []).filter((s) => s.result && s.stage !== 'ai'))
+
+const noteDialog = ref({ visible: false, stage: '', result: '', reason: '', evaluation: '' })
+function openNote(s) {
+  noteDialog.value = {
+    visible: true,
+    stage: s.stage,
+    result: s.result,
+    reason: s.reason || '',
+    evaluation: s.evaluation || '',
+  }
+}
+async function onNoteSaved() {
+  await load()
+  refreshStats?.()
+}
 </script>
 
 <template>
@@ -213,7 +233,54 @@ async function renameCandidate() {
         </template>
         <span v-else class="muted">尚未进行 AI 筛选。手动通过第一关即视为人工代替 AI 筛选。</span>
       </section>
+
+      <!-- 各关记录：推进时一键不留文字，事后来这里补写原因 / 面试评价 -->
+      <section class="panel">
+        <div class="panel-head">
+          <h3>各关记录</h3>
+          <span class="muted">补写各关的通过 / 淘汰原因与面试评价</span>
+        </div>
+
+        <div v-if="noteStages.length" class="note-list">
+          <div v-for="s in noteStages" :key="s.stage" class="note-item">
+            <div class="note-head">
+              <span class="note-dot" :style="{ background: STAGE_COLOR[s.stage] }" />
+              <span class="note-stage">{{ s.label }}</span>
+              <el-tag size="small" effect="light" :type="s.result === 'pass' ? 'success' : 'danger'">
+                {{ RESULT_LABEL[s.result] }}
+              </el-tag>
+              <span v-if="s.time" class="muted ats-nums">{{ fmtTime(s.time) }}</span>
+              <el-button class="note-edit" link type="primary" size="small" @click="openNote(s)">编辑</el-button>
+            </div>
+
+            <div class="note-field">
+              <span class="note-label">原因</span>
+              <span v-if="s.reason" class="note-text">{{ s.reason }}</span>
+              <span v-else class="muted">尚未填写</span>
+            </div>
+
+            <div v-if="stageHasEvaluation(s.stage)" class="note-field">
+              <span class="note-label">面试评价</span>
+              <pre v-if="s.evaluation" class="note-eval">{{ s.evaluation }}</pre>
+              <span v-else class="muted">尚未填写</span>
+            </div>
+          </div>
+        </div>
+        <p v-else class="muted note-empty">还没有完成任何阶段。推进流程后，可在这里补写各关原因与面试评价。</p>
+      </section>
     </template>
+
+    <!-- 各关记录的编辑弹窗 -->
+    <StageNoteDialog
+      v-if="app"
+      v-model="noteDialog.visible"
+      :app-id="app.id"
+      :stage="noteDialog.stage"
+      :result="noteDialog.result"
+      :reason="noteDialog.reason"
+      :evaluation="noteDialog.evaluation"
+      @saved="onNoteSaved"
+    />
   </div>
 </template>
 
@@ -378,5 +445,63 @@ async function renameCandidate() {
   margin: var(--ats-sp-2) 0 0;
   line-height: 1.8;
   color: var(--el-text-color-regular);
+}
+
+/* ---- 各关记录 ---- */
+.note-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ats-sp-3);
+  margin-top: var(--ats-sp-3);
+}
+.note-item {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--ats-radius);
+  padding: var(--ats-sp-3);
+}
+.note-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ats-sp-2);
+}
+/* 与管线里同一关同色的小色条，让两处一眼对得上 */
+.note-dot {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  flex: none;
+}
+.note-stage {
+  font-size: var(--ats-fs-body);
+  font-weight: var(--ats-fw-medium);
+  color: var(--el-text-color-primary);
+}
+.note-edit {
+  margin-left: auto;
+}
+.note-field {
+  display: flex;
+  gap: var(--ats-sp-3);
+  margin-top: var(--ats-sp-2);
+}
+.note-label {
+  flex: none;
+  width: 56px;
+  font-size: var(--ats-fs-label);
+  color: var(--el-text-color-secondary);
+  line-height: 1.9;
+}
+.note-text,
+.note-eval {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--ats-fs-body);
+  line-height: 1.9;
+  color: var(--el-text-color-regular);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.note-empty {
+  margin: var(--ats-sp-3) 0 0;
 }
 </style>

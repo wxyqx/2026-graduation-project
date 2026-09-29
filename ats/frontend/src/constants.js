@@ -44,3 +44,20 @@ export const STATUS_TYPE = Object.fromEntries(STATUSES.map((s) => [s.value, s.ty
 
 // 每一关的结果
 export const RESULT_LABEL = { pass: '通过', fail: '淘汰' }
+
+// 哪些阶段可以人工写「原因 / 面试评价」（ai 不在此列：它的理由是 AI 生成的 ai_comment，只读）
+//   hasReason     ：能否写「结果原因」——6 个人工关都能写（通过、淘汰都能写）
+//   hasEvaluation ：是否有「面试评价」一栏——只有四个面试环节有，简历筛选/笔试没有
+export const STAGE_NOTES = {
+  resume: { hasReason: true, hasEvaluation: false },
+  phone: { hasReason: true, hasEvaluation: true },
+  test: { hasReason: true, hasEvaluation: false },
+  pro: { hasReason: true, hasEvaluation: true },
+  hr: { hasReason: true, hasEvaluation: true },
+  final: { hasReason: true, hasEvaluation: true },
+}
+
+/** 这一关有没有「面试评价」一栏（弹窗、详情页都用它决定要不要渲染评价框） */
+export function stageHasEvaluation(stage) {
+  return !!STAGE_NOTES[stage]?.hasEvaluation
+}

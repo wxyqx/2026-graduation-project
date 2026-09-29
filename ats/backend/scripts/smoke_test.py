@@ -176,6 +176,38 @@ def run():
     detail = c.get(f"/api/applications/{a1}", headers=H).json()
     check(detail["position"]["id"] == p1 and detail["candidate"]["id"] == c1, "详情含候选人+岗位")
 
+    print("== 各关记录：结果原因 / 面试评价（详情页编辑，不改流程）==")
+    # 此时 a1 已走完全部 6 个人工关，正好逐个写记录。sn = 写某关记录
+    sn = lambda aid, stg, **kw: c.put(f"/api/applications/{aid}/stage-note", headers=H, json={"stage": stg, **kw})
+    check("reason" in detail["stages"][1] and "evaluation" in detail["stages"][1], "时间线含 reason/evaluation 键")
+    st = {s["stage"]: s for s in detail["stages"]}
+    check(sn(a1, "resume", reason="本科3年，符合岗位要求").json()["stages"][1]["reason"] == "本科3年，符合岗位要求", "简历筛选·写通过原因")
+    # 电话沟通：原因 + 面试评价
+    r = sn(a1, "phone", reason="沟通顺畅，接受厦门", evaluation="电话沟通评价全文")
+    st = {s["stage"]: s for s in r.json()["stages"]}
+    check(st["phone"]["reason"] == "沟通顺畅，接受厦门" and st["phone"]["evaluation"] == "电话沟通评价全文", "电话沟通·原因+面试评价")
+    check(sn(a1, "test", reason="笔试 86 分").json()["stages"][3]["reason"] == "笔试 86 分", "笔试·写通过原因")
+    # 专业面 / HR面：原因 + 面试评价
+    st = {s["stage"]: s for s in sn(a1, "pro", reason="技术扎实", evaluation="专业面评价").json()["stages"]}
+    check(st["pro"]["reason"] == "技术扎实" and st["pro"]["evaluation"] == "专业面评价", "专业面·原因+面试评价")
+    check(sn(a1, "hr", reason="稳定性好", evaluation="HR面评价").json()["stages"][5]["evaluation"] == "HR面评价", "HR面·原因+面试评价")
+    check(sn(a1, "final", reason="团队匹配度好", evaluation="终面评价").json()["stages"][6]["evaluation"] == "终面评价", "终面·原因+面试评价")
+    # 清空：传空字符串
+    check(sn(a1, "final", reason="").json()["stages"][6]["reason"] is None, "传空串 = 清空该项")
+    sn(a1, "final", reason="团队匹配度好")  # 写回去，供导出/统计用例
+    # 错误路径
+    check(sn(a1, "resume", reason="r", evaluation="e").status_code == 400, "简历筛选传面试评价 400")
+    check(sn(a1, "test", reason="r", evaluation="e").status_code == 400, "笔试传面试评价 400")
+    check(sn(a1, "ai", reason="x").status_code == 400, "ai 关不可手写 400")
+    check(sn(a1, "nope", reason="x").status_code == 400, "非法 stage 400")
+    check(sn(a2, "resume", reason="x").status_code == 400, "未进行阶段写记录 400")
+    check(c.put(f"/api/applications/{a1}/stage-note", json={"stage": "pro", "reason": "x"}).status_code == 401, "未登录写记录 401")
+    # 撤回该关 → 原因与面试评价一并清空
+    d = rev(a1).json()  # a1 现为 final/pass(已录用)，撤回 → final/pending，清 final 记录
+    st = {s["stage"]: s for s in d["stages"]}
+    check(st["final"]["reason"] is None and st["final"]["evaluation"] is None, "撤回该关 → 原因与面试评价清空")
+    d = adv(a1, "final", "pass").json()  # 再通过终面，恢复「已录用」状态，供后面用例
+
     print("== 岗位删除限制")
     check(c.delete(f"/api/positions/{p1}", headers=H).status_code == 409, "有投递的岗位删除 409")
     r = c.post("/api/positions", headers=H, json={"position_name": f"临时岗_{STAMP}"})

@@ -42,6 +42,9 @@ export const applicationApi = {
   advance: (id, fromStage, result) => http.post(`/applications/${id}/advance`, { fromStage, result }),
   // toStage 不传 = 撤销上一步
   revert: (id, toStage) => http.post(`/applications/${id}/revert`, toStage ? { toStage } : {}),
+  // 给某一关补写「结果原因」/「面试评价」（不改流程状态；空字符串 = 清空该项）
+  saveStageNote: (id, stage, reason, evaluation) =>
+    http.put(`/applications/${id}/stage-note`, { stage, reason, evaluation }),
 }
 
 // ---- 统计 ----

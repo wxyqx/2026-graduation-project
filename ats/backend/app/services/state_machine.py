@@ -36,6 +36,20 @@ STAGE_FIELDS: dict[str, tuple[str | None, str | None]] = {
     "final": ("final_result", "final_time"),
 }
 
+# 每一关的「人工文字记录」记在表的哪两格：(原因列名, 面试评价列名)
+#   ai   ：不在字典里——它的理由沿用 ai_comment，由 AI 生成，人工不可改
+#   简历/笔试：只有「原因」，没有面试评价
+#   四个面试关：既有「原因」，也有「面试评价」
+# 值里的 None 表示这一关没有这一格。字典里没有的键 = 这一关完全没有人工文字记录。
+STAGE_NOTE_FIELDS: dict[str, tuple[str | None, str | None]] = {
+    "resume": ("resume_reason", None),
+    "phone": ("phone_reason", "phone_evaluation"),
+    "test": ("test_reason", None),
+    "pro": ("pro_reason", "pro_evaluation"),
+    "hr": ("hr_reason", "hr_evaluation"),
+    "final": ("final_reason", "final_evaluation"),
+}
+
 RESULTS = {"pass", "fail"}  # 每一关只有两种成绩：通过 / 淘汰
 STATUSES = {"pending", "pass", "fail"}  # 整体只有三种状态：进行中 / 已录用 / 已淘汰
 
@@ -60,7 +74,7 @@ def write_stage(app: Application, stage: str, result: str, now: datetime) -> Non
 
 
 def clear_stage(app: Application, stage: str) -> None:
-    """把某一关的成绩和时间擦掉（撤回时用）。ai 这关顺便把 AI 理由也擦掉。"""
+    """把某一关的成绩、时间、以及人工记的原因 / 面试评价全部擦掉（撤回时用）。ai 这关顺便把 AI 理由也擦掉。"""
     result_field, time_field = STAGE_FIELDS[stage]
     if result_field:
         setattr(app, result_field, None)
@@ -68,6 +82,31 @@ def clear_stage(app: Application, stage: str) -> None:
         setattr(app, time_field, None)
     if stage == "ai":
         app.ai_comment = None
+    # 人工记录也一并清空：撤回这一关 = 这一关当没发生过，留下的原因/评价就成孤儿了
+    reason_field, evaluation_field = STAGE_NOTE_FIELDS.get(stage, (None, None))
+    if reason_field:
+        setattr(app, reason_field, None)
+    if evaluation_field:
+        setattr(app, evaluation_field, None)
+
+
+def stage_has_result(app: Application, stage: str) -> bool:
+    """这一关有没有出结果（用来判断「能不能给它写原因」——没进行过的关不能写）。"""
+    result_field, _ = STAGE_FIELDS[stage]
+    return bool(result_field and getattr(app, result_field, None))
+
+
+def save_stage_note(app: Application, stage: str, reason: str | None, evaluation: str | None) -> None:
+    """保存某一关的原因 / 面试评价（全在详情页手动编辑，不改变流程状态）。
+
+    传进来的空字符串统一存成 None（「清空」就是删掉，不留空串）。
+    简历筛选 / 笔试没有评价格，传了也会被忽略（路由层已先拦掉并回 400）。
+    """
+    reason_field, evaluation_field = STAGE_NOTE_FIELDS[stage]
+    if reason_field:
+        setattr(app, reason_field, reason or None)
+    if evaluation_field:
+        setattr(app, evaluation_field, evaluation or None)
 
 
 def apply_result(app: Application, stage: str, result: str, now: datetime) -> None:
@@ -130,10 +169,14 @@ def revert(app: Application, to_stage: str | None, now: datetime) -> None:
 
 
 def stage_timeline(app: Application) -> list[dict]:
-    """把 7 关的情况整理成一个列表，给详情页画「时间线」用。每一项：关名、中文名、成绩、时间、是否当前关。"""
+    """把 7 关的情况整理成一个列表，给详情页画「时间线」用。
+
+    每一项：关名、中文名、成绩、时间、是否当前关，外加人工记的「原因 / 面试评价」（没有的关返回 None）。
+    """
     items = []
     for s in STAGES:
         result_field, time_field = STAGE_FIELDS[s]
+        reason_field, evaluation_field = STAGE_NOTE_FIELDS.get(s, (None, None))
         items.append(
             {
                 "stage": s,
@@ -141,6 +184,9 @@ def stage_timeline(app: Application) -> list[dict]:
                 "result": getattr(app, result_field) if result_field else None,  # getattr 是「按名字取属性」
                 "time": getattr(app, time_field) if time_field else None,
                 "is_current": s == app.current_stage,
+                # 人工记录（ai 关固定为 None；简历/笔试的 evaluation 也固定为 None）
+                "reason": getattr(app, reason_field) if reason_field else None,
+                "evaluation": getattr(app, evaluation_field) if evaluation_field else None,
             }
         )
     return items

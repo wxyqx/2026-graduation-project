@@ -73,6 +73,16 @@ create table Application
    pro_time             DATETIME,
    overall_status       VARCHAR(20)  not null default 'pending',
    ai_comment           VARCHAR(500),
+   resume_reason        TEXT,
+   phone_reason         TEXT,
+   phone_evaluation     TEXT,
+   test_reason          TEXT,
+   pro_reason           TEXT,
+   pro_evaluation       TEXT,
+   hr_reason            TEXT,
+   hr_evaluation        TEXT,
+   final_reason         TEXT,
+   final_evaluation     TEXT,
    primary key (ID)
 );
 

@@ -55,3 +55,31 @@ class RevertIn(BaseModel):
         "populate_by_name": True,
         "json_schema_extra": {"examples": [{}, {"toStage": "resume"}]},
     }
+
+
+class StageNoteIn(BaseModel):
+    """给某一关补写「结果原因」/「面试评价」（详情页手动编辑，不改流程状态）。
+
+    - `stage`：改哪一关。只能是 6 个「人工关」之一（resume/phone/test/pro/hr/final），
+      不能是 `ai`——AI 筛选的理由由 AI 生成，人工不可改。
+    - `reason`：结果原因，通过或淘汰都能写。
+    - `evaluation`：面试评价，只有电话沟通/专业面/HR面/终面有；简历筛选与笔试传了会被拒（400）。
+    两个文字字段都可留空（传空字符串 = 清空）。
+    """
+
+    stage: str = Field(
+        description="要写记录的阶段：resume=简历筛选 / phone=电话沟通 / test=笔试 / pro=专业面 / hr=HR面 / final=终面"
+    )
+    reason: str | None = Field(default=None, max_length=2000, description="结果原因，通过或淘汰都能写，可留空")
+    evaluation: str | None = Field(
+        default=None, max_length=10000, description="面试评价（仅四个面试关），可留空"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"stage": "phone", "reason": "沟通顺畅，意向明确，接受厦门", "evaluation": "……面试评价全文……"},
+                {"stage": "resume", "reason": "本科+3年经验，符合岗位要求"},
+            ]
+        }
+    }

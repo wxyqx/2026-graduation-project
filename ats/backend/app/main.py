@@ -39,7 +39,7 @@ TAGS = [
     {"name": "auth", "description": "认证：注册 / 登录 / 当前用户 / 个人信息"},
     {"name": "positions", "description": "岗位管理"},
     {"name": "candidates", "description": "候选人管理"},
-    {"name": "applications", "description": "投递与 8 阶段流程（推进 / 撤回）"},
+    {"name": "applications", "description": "投递与 7 阶段流程（推进 / 撤回 / 各关原因与面试评价）"},
     {"name": "ai-configs", "description": "AI 接口配置（按登录用户隔离）"},
     {"name": "ai-screen", "description": "AI 智能录入（PDF / 纯文本 → 自动建档）"},
     {"name": "interview", "description": "面试评价（逐字稿 → 按固定模板出评价）"},
