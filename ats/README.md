@@ -36,7 +36,7 @@ copy .env.example .env   # 改数据库密码，并把 SECRET_KEY 换成随机�
 后端自检（需服务已启动，会自动清理测试数据）：
 
 ```bash
-.venv\Scripts\python scripts\smoke_test.py http://127.0.0.1:8000      # 全接口 + 状态机，72 项断言
+.venv\Scripts\python scripts\smoke_test.py http://127.0.0.1:8000      # 全接口 + 状态机，上百项断言
 .venv\Scripts\python scripts\mock_llm_test.py http://127.0.0.1:8000   # 本地 mock LLM 验证 AI 录入成功路径
 ```
 

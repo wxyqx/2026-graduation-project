@@ -1,7 +1,7 @@
 <!--
   【后台布局】登录后所有页面的「外框」：
     左边：可折叠菜单（岗位管理 / 候选人管理 / 投递列表 / 面试评价 / 汇总导出）
-    顶部：4 个可读指标 + 三档主题切换 + 用户名/退出（「系统设置」收进用户名下拉里）
+    顶部：4 个可读指标 + 三档主题切换 + 用户名/退出（「个人信息」「系统设置」收进用户名下拉里）
     中间：router-view
 
   设计说明（v3.12）：
@@ -25,6 +25,8 @@ const router = useRouter()
 const collapsed = ref(false)
 // 详情页 /applications/7 也要让「投递列表」菜单亮着
 const activeMenu = computed(() => (route.path.startsWith('/applications') ? '/applications' : route.path))
+// 个人信息 / 系统设置收在头像菜单里，停在这两页时把用户名标成主色，提示「你在这个菜单里」
+const isUserPage = computed(() => route.name === 'profile' || route.name === 'settings')
 
 // ---- 顶栏指标 ----
 const stats = ref(null)
@@ -55,9 +57,10 @@ function logout() {
   router.replace({ name: 'login' })
 }
 
-// 用户菜单：系统设置（低频，收进头像菜单，不占主菜单）/ 退出登录
+// 用户菜单：个人信息 / 系统设置 / 退出登录（都收进头像菜单，不占主菜单）
 function onUserCommand(command) {
-  if (command === 'settings') router.push({ name: 'settings' })
+  if (command === 'profile') router.push({ name: 'profile' })
+  else if (command === 'settings') router.push({ name: 'settings' })
   else if (command === 'logout') logout()
 }
 </script>
@@ -126,13 +129,17 @@ function onUserCommand(command) {
             <el-radio-button v-for="t in THEMES" :key="t.value" :value="t.value">{{ t.label }}</el-radio-button>
           </el-radio-group>
           <el-dropdown aria-label="用户菜单" @command="onUserCommand">
-            <span class="user" :class="{ 'is-active': route.name === 'settings' }">
+            <span class="user" :class="{ 'is-active': isUserPage }">
               <el-icon><User /></el-icon>
               {{ auth.user.value?.username || '用户' }}
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="profile">
+                  <el-icon><UserFilled /></el-icon>
+                  个人信息
+                </el-dropdown-item>
                 <el-dropdown-item command="settings">
                   <el-icon><Setting /></el-icon>
                   系统设置

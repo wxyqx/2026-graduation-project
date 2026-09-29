@@ -2,10 +2,11 @@
 【认证接口：注册 / 登录 / 我是谁】
 这是整个系统唯一「不用先登录」就能访问的一组接口（不然怎么登录呢）。
 
-三个网址：
+四个网址：
   POST /api/auth/register  注册（成功顺便帮你登录，直接发 token）
   POST /api/auth/login     登录
   GET  /api/auth/me        拿着 token 问「我是谁」——前端刷新页面后用它确认还在登录状态
+  PUT  /api/auth/profile   修改个人信息（用户名 / 密码），改密码需先验当前密码
 
 每个函数下面那段三引号里的文字，会原样显示在 /docs 网页上（支持 markdown）。
 """
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import User
-from app.schemas.auth import LoginIn, RegisterIn, TokenOut, UserOut
+from app.schemas.auth import LoginIn, ProfileUpdateIn, RegisterIn, TokenOut, UserOut
 from app.services.security import create_access_token, hash_password, verify_password
 
 # prefix：这个文件里所有网址都以 /api/auth 开头；tags：在 /docs 文档页里归到「auth」这一组
@@ -102,3 +103,39 @@ def me(current: User = Depends(get_current_user)):
 """
     # Depends(get_current_user)：门卫先验 token，验过了把用户对象塞给 current 参数
     return _user_out(current)
+
+
+@router.put("/profile", response_model=TokenOut)
+def update_profile(body: ProfileUpdateIn, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    """修改个人信息（用户名 / 密码）
+
+**干什么用**：登录后想换个用户名，或者想改密码，都来这里。点页面右上角用户名 →「个人信息」。
+
+**怎么填**：
+- `username`：必填，2～50 个字。和别人重名会被拒。
+- 要**改密码**时，把三项都填上：`current_password`（当前密码，用来验证是你本人）、`new_password`（至少 6 位）。
+  不改密码就只填 `username`，密码三项留空即可。
+
+**返回什么**：和登录一样，会重新发一张 `token` + 用户信息。前端拿到后替换本地保存的登录状态，顶栏用户名立刻更新。
+
+**可能出错**：
+- 400：要改密码但「当前密码」填错了
+- 409：新用户名已经被别人用了
+- 422：用户名长度不对 / 新密码太短
+"""
+    # 改密码：必须先验当前密码。否则只要 token 泄露，别人就能直接把密码改掉、把你锁在门外
+    if body.new_password:
+        if not body.current_password or not verify_password(body.current_password, current.password_hash):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前密码不正确")
+        current.password_hash = hash_password(body.new_password)
+
+    # 改用户名：查重时排除自己（新名字和自己的旧名字相同不算冲突）
+    if body.username != current.username:
+        exists = db.scalar(select(User).where(User.username == body.username, User.id != current.id))
+        if exists:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="用户名已存在")
+        current.username = body.username
+
+    db.commit()
+    db.refresh(current)
+    return TokenOut(token=create_access_token(current.id), user=_user_out(current))

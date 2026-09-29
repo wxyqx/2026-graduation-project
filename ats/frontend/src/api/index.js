@@ -10,6 +10,9 @@ export const authApi = {
   register: (username, password) => http.post('/auth/register', { username, password }, { silent: true }),
   login: (username, password) => http.post('/auth/login', { username, password }, { silent: true }),
   me: () => http.get('/auth/me'),
+  // 修改个人信息（用户名 / 密码）。data 例：{username} 或 {username, current_password, new_password}
+  // 后端会重新发一张 token，前端拿到后要替换本地登录状态
+  updateProfile: (data) => http.put('/auth/profile', data),
 }
 
 // ---- 岗位 ----

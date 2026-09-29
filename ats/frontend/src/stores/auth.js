@@ -26,6 +26,12 @@ export const auth = {
     localStorage.setItem(USER_KEY, JSON.stringify(newUser))
   },
 
+  /** 只更新用户信息（改用户名后刷新顶栏显示，token 另行 setAuth 替换） */
+  setUser(newUser) {
+    user.value = newUser
+    localStorage.setItem(USER_KEY, JSON.stringify(newUser))
+  },
+
   /** 退出登录 / token 失效时调用：全部清掉 */
   clear() {
     token.value = ''

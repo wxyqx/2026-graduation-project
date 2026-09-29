@@ -36,7 +36,7 @@ from app.routers import (
 
 # /docs 文档页上每个分组的中文说明
 TAGS = [
-    {"name": "auth", "description": "认证：注册 / 登录 / 当前用户"},
+    {"name": "auth", "description": "认证：注册 / 登录 / 当前用户 / 个人信息"},
     {"name": "positions", "description": "岗位管理"},
     {"name": "candidates", "description": "候选人管理"},
     {"name": "applications", "description": "投递与 8 阶段流程（推进 / 撤回）"},

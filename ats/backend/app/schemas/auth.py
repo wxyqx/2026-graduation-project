@@ -26,6 +26,27 @@ class LoginIn(BaseModel):
     model_config = {"json_schema_extra": {"examples": [{"username": "xiaoming", "password": "secret123"}]}}
 
 
+class ProfileUpdateIn(BaseModel):
+    """修改个人信息要填的表。用户名必填；只有「要改密码」时才需要把密码三项一起填。"""
+
+    username: str = Field(min_length=2, max_length=50, description="用户名，2～50 个字，登录时用它")
+    current_password: str | None = Field(
+        default=None, description="当前密码：只在要改密码时必填，用于验证身份（防止别人拿到 token 就改密码）"
+    )
+    new_password: str | None = Field(
+        default=None, min_length=6, max_length=72, description="新密码，至少 6 位；不填 = 不修改密码"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"username": "xiaoming"},
+                {"username": "xiaoming", "current_password": "secret123", "new_password": "newsecret456"},
+            ]
+        }
+    }
+
+
 class UserOut(BaseModel):
     """回给前端的用户信息。Out 结尾 = 「出去的数据」。注意：绝对不含密码哈希。"""
 

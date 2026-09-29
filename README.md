@@ -122,7 +122,7 @@ npm run dev
 
 ```bash
 cd ats/backend
-.venv\Scripts\python scripts\smoke_test.py http://127.0.0.1:8000      # 全接口 + 状态机，72 项断言
+.venv\Scripts\python scripts\smoke_test.py http://127.0.0.1:8000      # 全接口 + 状态机，上百项断言
 .venv\Scripts\python scripts\mock_llm_test.py http://127.0.0.1:8000   # 用本地 Mock LLM 验证 AI 录入
 ```
 

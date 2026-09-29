@@ -5,7 +5,7 @@
 每一步都「断言」（assert）结果必须是我们预期的，不对就立刻报错停下。
 
 这种「把主要功能快速跑一遍」的测试叫「冒烟测试」（比喻：机器一开机先看冒不冒烟）。
-以后改了代码，跑一遍这个脚本，72 项全绿就说明没改坏。
+以后改了代码，跑一遍这个脚本，上百项断言全绿就说明没改坏。
 
 用法：先起服务，再 `python scripts/smoke_test.py [服务地址]`，默认 http://127.0.0.1:8001。
 测试完自动清理本次创建的数据（直连数据库删除，因为投递/候选人/用户没有删除接口）。
@@ -66,6 +66,32 @@ def run():
     check(c.get("/api/auth/me").status_code == 401, "无 token 401")
     check(c.get("/api/positions", headers={"Authorization": "Bearer bad.token"}).status_code == 401, "坏 token 401")
     check(c.get("/api/applications").status_code == 401, "业务接口无 token 401")
+
+    print("== 个人信息（改用户名 / 改密码）")
+    check(c.put("/api/auth/profile", json={"username": "x"}).status_code == 401, "改个人信息未登录 401")
+    # 先造一个「别人」，用来验证改成别人用户名会 409
+    other = f"smoke_other_{STAMP}"
+    ro = c.post("/api/auth/register", json={"username": other, "password": pw})
+    created["users"].append(ro.json()["user"]["id"])
+    # 改用户名：成功后返回新 token，用新 token 问「我是谁」应看到新名字
+    new_name = f"{ua}_new"
+    check(c.put("/api/auth/profile", headers=H, json={"username": new_name}).status_code == 200, "改用户名 200")
+    check(c.put("/api/auth/profile", headers=H, json={"username": other}).status_code == 409, "改成别人用户名 409")
+    check(c.put("/api/auth/profile", headers=H, json={"username": "a"}).status_code == 422, "用户名过短 422")
+    token2 = c.put("/api/auth/profile", headers=H, json={"username": new_name}).json()["token"]
+    H = {"Authorization": f"Bearer {token2}"}
+    check(c.get("/api/auth/me", headers=H).json()["username"] == new_name, "新 token 反映新用户名")
+    # 改回原名，免得影响后面用例里用过的 ua
+    token = c.put("/api/auth/profile", headers=H, json={"username": ua}).json()["token"]
+    H = {"Authorization": f"Bearer {token}"}
+    check(c.get("/api/auth/me", headers=H).json()["username"] == ua, "改回原名")
+    # 改密码：当前密码不对 / 不填当前密码，都拒绝（400）
+    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "current_password": "wrong", "new_password": "newsecret456"}).status_code == 400, "当前密码错 400")
+    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "new_password": "newsecret456"}).status_code == 400, "缺当前密码 400")
+    # 正常改密码：旧密码失效、新密码可登录
+    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "current_password": pw, "new_password": "newsecret456"}).status_code == 200, "改密码 200")
+    check(c.post("/api/auth/login", json={"username": ua, "password": pw}).status_code == 401, "旧密码失效 401")
+    check(c.post("/api/auth/login", json={"username": ua, "password": "newsecret456"}).status_code == 200, "新密码可登录")
 
     print("== positions")
     r = c.post("/api/positions", headers=H, json={"position_name": f"Java工程师_{STAMP}", "owner": "HR-A",
