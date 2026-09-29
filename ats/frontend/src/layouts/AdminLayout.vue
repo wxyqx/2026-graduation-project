@@ -1,7 +1,7 @@
 <!--
   【后台布局】登录后所有页面的「外框」：
-    左边：可折叠菜单（岗位管理 / 候选人管理 / 投递列表 / 汇总导出 / 系统设置）
-    顶部：4 个可读指标 + 三档主题切换 + 用户名/退出
+    左边：可折叠菜单（岗位管理 / 候选人管理 / 投递列表 / 面试评价 / 汇总导出）
+    顶部：4 个可读指标 + 三档主题切换 + 用户名/退出（「系统设置」收进用户名下拉里）
     中间：router-view
 
   设计说明（v3.12）：
@@ -54,6 +54,12 @@ function logout() {
   auth.clear()
   router.replace({ name: 'login' })
 }
+
+// 用户菜单：系统设置（低频，收进头像菜单，不占主菜单）/ 退出登录
+function onUserCommand(command) {
+  if (command === 'settings') router.push({ name: 'settings' })
+  else if (command === 'logout') logout()
+}
 </script>
 
 <template>
@@ -87,10 +93,6 @@ function logout() {
           <el-icon><DataAnalysis /></el-icon>
           <template #title>汇总导出</template>
         </el-menu-item>
-        <el-menu-item index="/settings">
-          <el-icon><Setting /></el-icon>
-          <template #title>系统设置</template>
-        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -123,15 +125,22 @@ function logout() {
           <el-radio-group :model-value="theme" size="small" aria-label="主题切换" @change="applyTheme">
             <el-radio-button v-for="t in THEMES" :key="t.value" :value="t.value">{{ t.label }}</el-radio-button>
           </el-radio-group>
-          <el-dropdown aria-label="用户菜单" @command="logout">
-            <span class="user">
+          <el-dropdown aria-label="用户菜单" @command="onUserCommand">
+            <span class="user" :class="{ 'is-active': route.name === 'settings' }">
               <el-icon><User /></el-icon>
               {{ auth.user.value?.username || '用户' }}
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                <el-dropdown-item command="settings">
+                  <el-icon><Setting /></el-icon>
+                  系统设置
+                </el-dropdown-item>
+                <el-dropdown-item command="logout" divided>
+                  <el-icon><SwitchButton /></el-icon>
+                  退出登录
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -269,6 +278,11 @@ function logout() {
   cursor: pointer;
   font-size: var(--ats-fs-body);
   color: var(--el-text-color-regular);
+}
+/* 系统设置已收进头像菜单，停在该页时用主色标出位置 */
+.user.is-active {
+  color: var(--el-color-primary);
+  font-weight: var(--ats-fw-medium);
 }
 
 .main {
