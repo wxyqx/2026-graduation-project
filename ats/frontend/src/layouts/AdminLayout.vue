@@ -18,6 +18,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { statsApi } from '../api'
 import { auth } from '../stores/auth'
 import { THEMES, applyTheme, theme } from '../theme'
+import ProfileDialog from '../views/ProfileDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,8 +26,10 @@ const router = useRouter()
 const collapsed = ref(false)
 // 详情页 /applications/7 也要让「投递列表」菜单亮着
 const activeMenu = computed(() => (route.path.startsWith('/applications') ? '/applications' : route.path))
-// 个人信息 / 系统设置收在头像菜单里，停在这两页时把用户名标成主色，提示「你在这个菜单里」
-const isUserPage = computed(() => route.name === 'profile' || route.name === 'settings')
+// 系统设置收在头像菜单里，停在设置页时把用户名标成主色，提示「你在这个菜单里」
+const isUserPage = computed(() => route.name === 'settings')
+// 个人信息用弹窗（字段少，单开一页太空）
+const profileVisible = ref(false)
 
 // ---- 顶栏指标 ----
 const stats = ref(null)
@@ -57,9 +60,9 @@ function logout() {
   router.replace({ name: 'login' })
 }
 
-// 用户菜单：个人信息 / 系统设置 / 退出登录（都收进头像菜单，不占主菜单）
+// 用户菜单：个人信息（弹窗）/ 系统设置 / 退出登录（都收进头像菜单，不占主菜单）
 function onUserCommand(command) {
-  if (command === 'profile') router.push({ name: 'profile' })
+  if (command === 'profile') profileVisible.value = true
   else if (command === 'settings') router.push({ name: 'settings' })
   else if (command === 'logout') logout()
 }
@@ -158,6 +161,9 @@ function onUserCommand(command) {
         <router-view />
       </el-main>
     </el-container>
+
+    <!-- 个人信息弹窗（从右上角用户菜单打开） -->
+    <ProfileDialog v-model="profileVisible" />
   </el-container>
 </template>
 

@@ -28,7 +28,6 @@ const routes = [
       { path: 'interview', name: 'interview', component: () => import('../views/InterviewView.vue'), meta: { title: '面试评价' } },
       { path: 'stats', name: 'stats', component: () => import('../views/StatsView.vue'), meta: { title: '汇总导出' } },
       { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { title: '系统设置' } },
-      { path: 'profile', name: 'profile', component: () => import('../views/ProfileView.vue'), meta: { title: '个人信息' } },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }, // 乱输网址一律回首页
