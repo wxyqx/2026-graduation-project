@@ -340,6 +340,12 @@ async function remove(row) {
             <el-tag v-else type="warning" size="small" effect="plain">待补手机号</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="负责人" width="110">
+          <template #default="{ row }">
+            <span v-if="row.owner_name">{{ row.owner_name }}</span>
+            <span v-else class="muted">暂无</span>
+          </template>
+        </el-table-column>
         <el-table-column label="账号" width="110">
           <template #default="{ row }">
             <el-tag :type="row.has_account ? 'success' : 'info'" size="small" effect="plain">

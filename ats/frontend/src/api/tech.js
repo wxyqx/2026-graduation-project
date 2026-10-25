@@ -25,6 +25,17 @@ export const techAccountApi = {
   resetPassword: (id) => techHttp.put(`/accounts/${id}/reset-password`),
 }
 
+export const techStageOwnerApi = {
+  list: (keyword) => techHttp.get('/candidate-owners/stage-owners', { params: keyword ? { keyword } : {} }),
+  setOwners: (appId, owners) => techHttp.put(`/candidate-owners/stage-owners/${appId}`, { owners }),
+}
+
+export const techCandidateOwnerApi = {
+  list: (keyword) => techHttp.get('/candidate-owners', { params: keyword ? { keyword } : {} }),
+  setOwner: (id, owner_id) => techHttp.put(`/candidate-owners/${id}`, { owner_id }),
+  batchSetOwner: (candidate_ids, owner_id) => techHttp.put('/candidate-owners/batch', { candidate_ids, owner_id }),
+}
+
 export const techConfigApi = {
   list: () => techHttp.get('/ai-configs'),
   create: (data) => techHttp.post('/ai-configs', data),

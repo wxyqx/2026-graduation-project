@@ -36,14 +36,22 @@ function resetFilters() {
 const createVisible = ref(false)
 const createRef = ref()
 const creating = ref(false)
-const createForm = reactive({ role: 'hr', username: '', password: 'admin' })
+const createForm = reactive({ role: 'hr', username: '', phone: '', real_name: '', password: 'admin' })
 const createRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  phone: [
+    { required: true, message: '请输入手机号', trigger: 'blur' },
+    { pattern: /^1[3-9]\d{9}$/, message: '手机号 11 位，1 开头', trigger: 'blur' },
+  ],
+  real_name: [
+    { required: true, message: '请输入实名', trigger: 'blur' },
+    { min: 2, max: 50, message: '姓名 2～50 个字', trigger: 'blur' },
+  ],
   password: [{ required: true, message: '请输入初始密码', trigger: 'blur' }],
 }
 
 function openCreate() {
-  Object.assign(createForm, { role: 'hr', username: '', password: 'admin' })
+  Object.assign(createForm, { role: 'hr', username: '', phone: '', real_name: '', password: 'admin' })
   createVisible.value = true
 }
 
@@ -68,9 +76,20 @@ async function toggleStatus(row) {
     } catch {
       return
     }
+  } else if (row.close_reason === 'eliminated') {
+    // 淘汰销号的账号：启用即恢复（后端校验 3 个月保存期，过期返回 400）
+    try {
+      await ElMessageBox.confirm(
+        `恢复「${row.name}」的账号？候选人资料与投递记录一直保留，恢复后可用原密码重新登录（恢复截止 ${fmtTime(row.restore_deadline) || '—'}）。`,
+        '恢复账号',
+        { type: 'warning', confirmButtonText: '确认恢复', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
   }
   await techAccountApi.setStatus(row.id, next)
-  ElMessage.success(next ? '已启用' : '已停用')
+  ElMessage.success(next ? (row.close_reason === 'eliminated' ? '账号已恢复' : '已启用') : '已停用')
   await load()
 }
 
@@ -149,17 +168,23 @@ function isSelf(row) {
         <el-table-column label="最近登录" width="150">
           <template #default="{ row }">{{ fmtTime(row.last_login_time) || '—' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="150">
           <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'info'" size="small" effect="plain">
+            <el-tag v-if="row.close_reason === 'eliminated'" type="warning" size="small" effect="plain">
+              已淘汰销号
+            </el-tag>
+            <el-tag v-else :type="row.is_active ? 'success' : 'info'" size="small" effect="plain">
               {{ row.is_active ? '启用' : '停用' }}
             </el-tag>
+            <div v-if="row.close_reason === 'eliminated'" class="muted" style="font-size: 11px; margin-top: 2px">
+              恢复截止 {{ fmtTime(row.restore_deadline) || '—' }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
             <el-button link :type="row.is_active ? 'danger' : 'success'" :disabled="isSelf(row)" @click="toggleStatus(row)">
-              {{ row.is_active ? '停用' : '启用' }}
+              {{ row.is_active ? '停用' : row.close_reason === 'eliminated' ? '恢复账号' : '启用' }}
             </el-button>
             <el-button link type="primary" @click="resetPassword(row)">重置密码</el-button>
           </template>
@@ -177,6 +202,12 @@ function isSelf(row) {
         </el-form-item>
         <el-form-item label="用户名" prop="username">
           <el-input v-model="createForm.username" placeholder="登录用户名" />
+        </el-form-item>
+        <el-form-item label="手机号" prop="phone">
+          <el-input v-model="createForm.phone" maxlength="11" placeholder="11 位手机号（必填）" />
+        </el-form-item>
+        <el-form-item label="姓名" prop="real_name">
+          <el-input v-model="createForm.real_name" maxlength="50" placeholder="实名（必填）" />
         </el-form-item>
         <el-form-item label="初始密码" prop="password">
           <el-input v-model="createForm.password" placeholder="默认 admin" />

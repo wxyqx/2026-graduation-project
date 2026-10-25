@@ -19,7 +19,7 @@ export const techAuth = {
   token,
   user,
   isLoggedIn: computed(() => !!token.value),
-  displayName: computed(() => user.value?.username || '技术管理员'),
+  displayName: computed(() => user.value?.real_name || user.value?.username || '技术管理员'),
 
   setAuth(newToken, newUser) {
     token.value = newToken

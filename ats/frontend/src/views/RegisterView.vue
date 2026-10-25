@@ -13,11 +13,19 @@ import { auth } from '../stores/auth'
 const router = useRouter()
 
 const formRef = ref()
-const form = reactive({ username: '', password: '', confirm: '' })
+const form = reactive({ username: '', real_name: '', phone: '', password: '', confirm: '' })
 const rules = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
     { min: 2, max: 50, message: '用户名 2～50 个字', trigger: 'blur' },
+  ],
+  phone: [
+    { required: true, message: '请输入手机号', trigger: 'blur' },
+    { pattern: /^1[3-9]\d{9}$/, message: '手机号 11 位，1 开头', trigger: 'blur' },
+  ],
+  real_name: [
+    { required: true, message: '请输入实名', trigger: 'blur' },
+    { min: 2, max: 50, message: '姓名 2～50 个字', trigger: 'blur' },
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
@@ -40,7 +48,7 @@ async function submit() {
   loading.value = true
   errorMsg.value = ''
   try {
-    const data = await authApi.register(form.username, form.password)
+    const data = await authApi.register(form.username, form.password, form.phone, form.real_name)
     auth.setAuth(data.token, data.user)
     router.replace({ name: 'positions' })
   } catch (e) {
@@ -55,7 +63,7 @@ async function submit() {
   <div class="portal-login">
     <div class="login-card">
       <div class="login-brand">ATS</div>
-      <p class="login-sub">注册 HR 账号 · 只需用户名和密码</p>
+      <p class="login-sub">注册 HR 账号 · 实名、用户名、手机号和密码</p>
 
       <div class="mini-pipeline" aria-hidden="true">
         <i v-for="s in STAGES" :key="s.value" :style="{ background: STAGE_COLOR[s.value] }" />
@@ -71,6 +79,18 @@ async function submit() {
             placeholder="2～50 个字"
             autofocus
           />
+        </el-form-item>
+        <el-form-item label="手机号" prop="phone">
+          <el-input
+            v-model="form.phone"
+            name="phone"
+            autocomplete="tel"
+            maxlength="11"
+            placeholder="11 位手机号（必填）"
+          />
+        </el-form-item>
+        <el-form-item label="姓名" prop="real_name">
+          <el-input v-model="form.real_name" name="name" autocomplete="name" maxlength="50" placeholder="实名（必填）" />
         </el-form-item>
         <el-form-item label="密码" prop="password">
           <el-input

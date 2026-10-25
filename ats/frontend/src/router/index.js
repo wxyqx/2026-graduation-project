@@ -84,7 +84,7 @@ const routes = [
         path: 'profile',
         name: 'portal-profile',
         component: () => import('../views/portal/PortalProfileView.vue'),
-        meta: { portal: true, title: '我的' },
+        meta: { portal: true, title: '我的资料' },
       },
     ],
   },
@@ -119,6 +119,18 @@ const routes = [
         name: 'tech-config',
         component: () => import('../views/tech/TechConfigView.vue'),
         meta: { tech: true, title: '系统配置' },
+      },
+      {
+        path: 'candidate-owners',
+        name: 'tech-candidate-owners',
+        component: () => import('../views/tech/TechCandidateOwnersView.vue'),
+        meta: { tech: true, title: '候选人负责人' },
+      },
+      {
+        path: 'stage-owners',
+        name: 'tech-stage-owners',
+        component: () => import('../views/tech/TechStageOwnersView.vue'),
+        meta: { tech: true, title: '关卡负责人' },
       },
       {
         path: 'logs',

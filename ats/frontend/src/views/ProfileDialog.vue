@@ -2,9 +2,10 @@
   【个人信息弹窗】点右上角用户名 →「个人信息」弹出。
   用弹窗而不是整页：这里只有四项内容，单独占一页太空；弹窗既不打断当前工作，也放得下。
 
-  两件事：
+  三件事：
     1. 改用户名（登录时用的名字，顶栏显示的就是它）
-    2. 改密码 —— 必须填「当前密码」验证是本人，否则拿到 token 的人能直接把密码改掉
+    2. 手机号（必填：联系方式强制要求有）
+    3. 改密码 —— 必须填「当前密码」验证是本人，否则拿到 token 的人能直接把密码改掉
   用户名和密码可以一起改，也可以只改一项（密码三项留空 = 不改密码）。
   保存成功后后端会重发一张 token，这里替换本地登录状态，顶栏名字立刻更新。
 -->
@@ -26,7 +27,7 @@ const visible = computed({
 
 const formRef = ref()
 const saving = ref(false)
-const form = reactive({ username: '', current_password: '', new_password: '', confirm_password: '' })
+const form = reactive({ username: '', real_name: '', phone: '', current_password: '', new_password: '', confirm_password: '' })
 
 // 头像里的首字母 + 注册时间，给弹窗一个「这是谁」的落点，不至于一上来就是四个空输入框
 const initial = computed(() => (auth.user.value?.username || 'U').slice(0, 1).toUpperCase())
@@ -38,6 +39,8 @@ const createTime = computed(() => {
 // 打开时按当前账号重置表单，避免上次残留。immediate 兼顾「一挂载就是打开状态」的情况
 function fillForm() {
   form.username = auth.user.value?.username || ''
+  form.real_name = auth.user.value?.real_name || ''
+  form.phone = auth.user.value?.phone || ''
   form.current_password = ''
   form.new_password = ''
   form.confirm_password = ''
@@ -50,6 +53,14 @@ const rules = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
     { min: 2, max: 50, message: '用户名 2～50 个字', trigger: 'blur' },
+  ],
+  phone: [
+    { required: true, message: '请输入手机号', trigger: 'blur' },
+    { pattern: /^1[3-9]\d{9}$/, message: '手机号 11 位，1 开头', trigger: 'blur' },
+  ],
+  real_name: [
+    { required: true, message: '请输入实名', trigger: 'blur' },
+    { min: 2, max: 50, message: '姓名 2～50 个字', trigger: 'blur' },
   ],
   new_password: [
     {
@@ -80,7 +91,7 @@ async function save() {
     return
   }
 
-  const payload = { username: form.username }
+  const payload = { username: form.username, phone: form.phone, real_name: form.real_name }
   if (form.new_password) {
     payload.current_password = form.current_password
     payload.new_password = form.new_password
@@ -134,6 +145,12 @@ async function save() {
           maxlength="50"
           placeholder="2～50 个字，登录时用它"
         />
+      </el-form-item>
+      <el-form-item label="手机号" prop="phone">
+        <el-input v-model="form.phone" name="phone" autocomplete="tel" maxlength="11" placeholder="11 位手机号（必填）" />
+      </el-form-item>
+      <el-form-item label="姓名" prop="real_name">
+        <el-input v-model="form.real_name" name="name" autocomplete="name" maxlength="50" placeholder="实名（必填）" />
       </el-form-item>
 
       <div class="section">

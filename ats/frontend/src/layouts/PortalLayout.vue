@@ -1,7 +1,7 @@
 <!--
   【候选人端布局】移动优先
   顶部：品牌 + 当前候选人；桌面端显示横向导航
-  底部：手机端固定 4 个入口（岗位 / 投递 / 文件 / 我的）
+  底部：手机端固定 3 个入口（岗位 / 投递 / 文件）；个人资料不占导航，收进右上角用户菜单的「我的资料」
   内容区最大宽 720，桌面上居中显示，不做成后台那种左菜单。
 -->
 <script setup>
@@ -80,7 +80,6 @@ const navItems = [
   { name: 'portal-positions', label: '岗位', icon: 'Briefcase', to: '/portal/positions' },
   { name: 'portal-applications', label: '投递', icon: 'Tickets', to: '/portal/applications' },
   { name: 'portal-files', label: '文件', icon: 'Document', to: '/portal/files' },
-  { name: 'portal-profile', label: '我的', icon: 'User', to: '/portal/profile' },
 ]
 
 function isActive(item) {
@@ -147,8 +146,6 @@ watch(
         </router-link>
       </nav>
 
-      <UserAvatar :fetch-blob="portalAuthApi.avatarBlob" :name="me?.name || me?.phone || '候选人'" :size="40" />
-
       <el-dropdown class="portal-theme-dropdown" trigger="click" @command="applyTheme">
         <button type="button" class="portal-theme" title="切换主题" aria-label="切换主题">
           <el-icon :size="17"><component :is="themeIcon" /></el-icon>
@@ -169,7 +166,7 @@ watch(
 
       <el-dropdown trigger="click" @command="onUserCommand">
         <button class="portal-user" type="button">
-          <el-icon><UserFilled /></el-icon>
+          <UserAvatar :fetch-blob="portalAuthApi.avatarBlob" :name="me?.name || me?.phone || '候选人'" :size="26" />
           <span class="portal-user-name">{{ portalAuth.displayName.value }}</span>
           <el-icon class="caret"><ArrowDown /></el-icon>
         </button>
@@ -427,7 +424,7 @@ watch(
   bottom: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   background: var(--el-bg-color);
   border-top: 1px solid var(--el-border-color-light);
   padding-bottom: env(safe-area-inset-bottom);
@@ -436,14 +433,19 @@ watch(
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 8px 0 6px;
-  font-size: 11px;
+  justify-content: center;
+  gap: 3px;
+  padding: 9px 0 7px;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
   text-decoration: none;
 }
+.tab-item .el-icon {
+  font-size: 22px;
+}
 .tab-item.active {
   color: var(--el-color-primary);
+  font-weight: var(--ats-fw-medium);
 }
 
 @media (max-width: 759px) {

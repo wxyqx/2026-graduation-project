@@ -43,6 +43,18 @@ async function toggleHidden(row) {
   refreshStats?.()
 }
 
+// ---- 负责人选项（来自 HR 账号） ----
+const hrUsers = ref([])
+
+async function loadHrUsers() {
+  try {
+    hrUsers.value = await positionApi.hrUsers()
+  } catch {
+    hrUsers.value = []
+  }
+}
+loadHrUsers()
+
 // ---- 新建 / 编辑弹窗 ----
 const dialogVisible = ref(false)
 const editingId = ref(null) // null = 新建，数字 = 编辑这个 id
@@ -206,13 +218,16 @@ async function remove(row) {
           />
         </el-form-item>
         <el-form-item label="负责人" prop="owner">
-          <el-input
+          <el-select
             v-model="form.owner"
             name="position-owner"
-            autocomplete="name"
-            placeholder="招聘负责人，可不填"
-            maxlength="100"
-          />
+            placeholder="选择招聘负责人，可不填"
+            clearable
+            filterable
+            style="width: 100%"
+          >
+            <el-option v-for="u in hrUsers" :key="u.username" :label="u.label" :value="u.real_name || u.username" />
+          </el-select>
         </el-form-item>
         <el-form-item label="岗位要求" prop="position_requirements">
           <el-input

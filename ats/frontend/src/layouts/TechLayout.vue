@@ -57,6 +57,8 @@ async function submitPassword() {
 const menu = [
   { path: '/tech', label: '运行概览', icon: 'DataAnalysis' },
   { path: '/tech/accounts', label: '账号管理', icon: 'UserFilled' },
+  { path: '/tech/candidate-owners', label: '候选人负责人', icon: 'Avatar' },
+  { path: '/tech/stage-owners', label: '关卡负责人', icon: 'Files' },
   { path: '/tech/config', label: '系统配置', icon: 'Setting' },
   { path: '/tech/logs', label: '操作日志', icon: 'List' },
   { path: '/tech/backup', label: '备份导出', icon: 'Download' },

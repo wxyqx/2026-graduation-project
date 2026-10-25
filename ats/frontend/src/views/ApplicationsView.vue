@@ -13,6 +13,7 @@ import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { applicationApi, candidateApi, positionApi, statsApi } from '../api'
+import { auth } from '../stores/auth'
 import { RESULT_LABEL, STAGES, STAGE_COLOR, STAGE_LABEL, STATUSES, STATUS_LABEL, STATUS_TYPE } from '../constants'
 
 // 终面通关（overall_status=pass）= 已入职，是流程之外的展示态，不是第 8 关
@@ -138,15 +139,28 @@ function resetFilters() {
 }
 
 // ---- 行内操作：通过 / 淘汰 / 撤回 ----
+// 编辑权限：候选人负责人=全部关卡；阶段负责人=本关；关卡还没负责人=可编辑（编辑即认领）
+function canEditRow(row) {
+  const meId = auth.user.value?.id
+  if (meId == null) return true
+  if (row.candidate_owner_id === meId) return true
+  const sid = row.stage_owner_ids?.[row.current_stage]
+  return sid == null || sid === meId
+}
+
 async function advance(row, result) {
   if (result === 'fail') {
     try {
-      await ElMessageBox.confirm(`确定淘汰「${row.candidate_name}」？`, '淘汰确认', { type: 'warning' })
+      await ElMessageBox.confirm(
+      `确定淘汰「${row.candidate_name}」？淘汰后将立即发送淘汰通知，候选人的账号会在 2 天后注销（期间登录可见通知，之后无法登录）。`,
+      '淘汰确认',
+      { type: 'warning', confirmButtonText: '确认淘汰', cancelButtonText: '再想想' },
+    )
     } catch {
       return
     }
   }
-  await applicationApi.advance(row.id, row.current_stage, result)
+  await applicationApi.advance(row.id, row.current_stage, result, result === 'fail')
   ElMessage.success(result === 'pass' ? `已通过「${STAGE_LABEL[row.current_stage]}」` : '已标记淘汰')
   await load()
   loadStageCounts()
@@ -421,8 +435,20 @@ function onIntakeClosed() {
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" :disabled="row.overall_status !== 'pending'" @click="advance(row, 'pass')">通过</el-button>
-          <el-button link type="danger" :disabled="row.overall_status !== 'pending'" @click="advance(row, 'fail')">淘汰</el-button>
+          <el-button
+            link
+            type="primary"
+            :disabled="row.overall_status !== 'pending' || !canEditRow(row)"
+            :title="canEditRow(row) ? '' : '本阶段由其他 HR 负责，你只能查看'"
+            @click="advance(row, 'pass')"
+          >通过</el-button>
+          <el-button
+            link
+            type="danger"
+            :disabled="row.overall_status !== 'pending' || !canEditRow(row)"
+            :title="canEditRow(row) ? '' : '本阶段由其他 HR 负责，你只能查看'"
+            @click="advance(row, 'fail')"
+          >淘汰</el-button>
           <el-button link :disabled="!canRevert(row)" @click="revert(row)">撤回</el-button>
           <el-button link @click="router.push({ name: 'application-detail', params: { id: row.id } })">详情</el-button>
         </template>

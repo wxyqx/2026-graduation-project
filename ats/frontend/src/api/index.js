@@ -7,7 +7,9 @@ import http from './http'
 
 // ---- 认证 ----
 export const authApi = {
-  register: (username, password) => http.post('/auth/register', { username, password }, { silent: true }),
+  // 注册 HR：实名与手机号必填
+  register: (username, password, phone, realName) =>
+    http.post('/auth/register', { username, password, phone, real_name: realName }, { silent: true }),
   login: (username, password) => http.post('/auth/login', { username, password }, { silent: true }),
   me: () => http.get('/auth/me'),
   // 修改个人信息（用户名 / 密码）。data 例：{username} 或 {username, current_password, new_password}
@@ -29,6 +31,7 @@ export const positionApi = {
   create: (data) => http.post('/positions', data),
   update: (id, data) => http.put(`/positions/${id}`, data),
   remove: (id) => http.delete(`/positions/${id}`),
+  hrUsers: () => http.get('/positions/hr-users'),
 }
 
 // ---- 候选人 ----
@@ -74,8 +77,9 @@ export const applicationApi = {
   list: (params) => http.get('/applications', { params }),
   create: (can_id, pos_id) => http.post('/applications', { can_id, pos_id }),
   detail: (id) => http.get(`/applications/${id}`),
-  // fromStage 必须是当前阶段，result 是 pass / fail
-  advance: (id, fromStage, result) => http.post(`/applications/${id}/advance`, { fromStage, result }),
+  // fromStage 必须是当前阶段，result 是 pass / fail；fail 必须先弹窗确认（confirmEliminate=true），否则后端 400
+  advance: (id, fromStage, result, confirmEliminate = false) =>
+    http.post(`/applications/${id}/advance`, { fromStage, result, confirm_eliminate: confirmEliminate }),
   // toStage 不传 = 撤销上一步
   revert: (id, toStage) => http.post(`/applications/${id}/revert`, toStage ? { toStage } : {}),
   // 给某一关补写「结果原因」/「面试评价」（不改流程状态；空字符串 = 清空该项）

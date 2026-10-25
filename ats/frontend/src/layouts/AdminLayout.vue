@@ -138,8 +138,8 @@ function onUserCommand(command) {
           </el-radio-group>
           <el-dropdown aria-label="用户菜单" @command="onUserCommand">
             <span class="user" :class="{ 'is-active': isUserPage }">
-              <UserAvatar :fetch-blob="authApi.avatarBlob" :name="auth.user.value?.username || '用户'" :size="32" />
-              {{ auth.user.value?.username || '用户' }}
+              <UserAvatar :fetch-blob="authApi.avatarBlob" :name="auth.user.value?.real_name || auth.user.value?.username || '用户'" :size="32" />
+              {{ auth.user.value?.real_name || auth.user.value?.username || '用户' }}
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>

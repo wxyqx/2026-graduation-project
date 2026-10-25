@@ -8,6 +8,8 @@ const apiTarget = process.env.VITE_API_TARGET || 'http://127.0.0.1:8000'
 export default defineConfig({
   plugins: [vue()],
   server: {
+    // host: true = 监听所有网卡（远程联测/内网穿透时朋友才能访问；平时只在本机用没影响）
+    host: true,
     proxy: {
       '/api': apiTarget,
     },

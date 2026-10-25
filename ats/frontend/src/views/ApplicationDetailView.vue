@@ -13,6 +13,7 @@ import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { applicationApi, candidateApi, formTemplateApi, interviewApi } from '../api'
+import { auth } from '../stores/auth'
 import PortalFormRenderer from '../components/PortalFormRenderer.vue'
 import RichTextEditor from '../components/RichTextEditor.vue'
 import { RESULT_LABEL, STAGE_COLOR, STAGE_LABEL, STATUS_LABEL, STATUS_TYPE, stageHasEvaluation } from '../constants'
@@ -242,12 +243,16 @@ const canRevert = computed(() => app.value && !(app.value.current_stage === 'ai'
 async function advance(result) {
   if (result === 'fail') {
     try {
-      await ElMessageBox.confirm(`确定淘汰「${app.value.candidate_name}」？`, '淘汰确认', { type: 'warning' })
+      await ElMessageBox.confirm(
+      `确定淘汰「${app.value.candidate_name}」？淘汰后将立即发送淘汰通知，候选人的账号会在 2 天后注销（期间登录可见通知，之后无法登录）。`,
+      '淘汰确认',
+      { type: 'warning', confirmButtonText: '确认淘汰', cancelButtonText: '再想想' },
+    )
     } catch {
       return
     }
   }
-  await applicationApi.advance(app.value.id, app.value.current_stage, result)
+  await applicationApi.advance(app.value.id, app.value.current_stage, result, result === 'fail')
   ElMessage.success(result === 'pass' ? '已通过本阶段' : '已标记淘汰')
   await load()
   refreshStats?.()
@@ -329,6 +334,24 @@ async function saveProfile() {
   }
 }
 
+// ---- 编辑权限：候选人负责人=全部关卡；阶段负责人=本关；无主的关=可编辑（编辑即认领）----
+const meId = computed(() => auth.user.value?.id ?? null)
+function stageOwnerId(stage) {
+  return app.value?.stage_owners?.[stage]?.user_id ?? null
+}
+function stageOwnerName(stage) {
+  return app.value?.stage_owners?.[stage]?.name || null
+}
+function canEditStage(stage) {
+  const me = meId.value
+  if (me == null || !app.value) return true
+  if (app.value.candidate_owner_id === me) return true
+  const sid = stageOwnerId(stage)
+  return sid == null || sid === me
+}
+const selectedStageEditable = computed(() => canEditStage(selectedNote.value?.stage))
+const currentStageEditable = computed(() => canEditStage(app.value?.current_stage))
+
 // ---- 各关记录（就地编辑：选关后直接在页内填原因 / 面试评价）----
 // 列出「已出结果的人工关」+「正在进行中的当前关」——进行中也能先写（面试完就记评价，之后再定通过/淘汰）。
 // ai 关不在此列，它有独立面板，理由由 AI 生成、不可手改。
@@ -346,13 +369,15 @@ const selectedNote = computed(() => noteStages.value[noteIndex.value] || null)
 const noteMarks = computed(() => {
   const marks = {}
   noteStages.value.forEach((s, i) => {
+    // 滑块标签下带本关负责人：每个阶段都能看到这关归谁管（未认领的显示「未认领」）
+    const owner = stageOwnerName(s.stage)
     marks[i] = {
       style: {
         color: s.stage === selectedNote.value?.stage ? 'var(--el-color-primary)' : STAGE_COLOR[s.stage],
         fontWeight: s.stage === selectedNote.value?.stage ? 'var(--ats-fw-bold)' : 'var(--ats-fw-normal)',
         whiteSpace: 'nowrap',
       },
-      label: s.label,
+      label: owner ? `${s.label}·${owner}` : s.label,
     }
   })
   return marks
@@ -400,14 +425,18 @@ async function onNoteResultChange(v) {
   }
   if (v === 'fail') {
     try {
-      await ElMessageBox.confirm(`确定淘汰「${app.value.candidate_name}」？`, '淘汰确认', { type: 'warning' })
+      await ElMessageBox.confirm(
+      `确定淘汰「${app.value.candidate_name}」？淘汰后将立即发送淘汰通知，候选人的账号会在 2 天后注销（期间登录可见通知，之后无法登录）。`,
+      '淘汰确认',
+      { type: 'warning', confirmButtonText: '确认淘汰', cancelButtonText: '再想想' },
+    )
     } catch {
       noteResult.value = selectedNote.value?.result || ''
       return
     }
   }
   try {
-    await applicationApi.advance(app.value.id, app.value.current_stage, v)
+    await applicationApi.advance(app.value.id, app.value.current_stage, v, v === 'fail')
     ElMessage.success(v === 'pass' ? '已通过本阶段' : '已标记淘汰')
     await load()
     refreshStats?.()
@@ -429,7 +458,7 @@ async function saveNoteInline() {
 }
 
 // ---- 候选人通知：通过关卡生成草稿，这里逐人编辑后发送 ----
-const STAGE_LABELS_LOCAL = { phone: '电话沟通', test: '笔试', pro: '专业面', hr: 'HR面', final: '终面', onboard: '入职' }
+const STAGE_LABELS_LOCAL = { phone: '电话沟通', test: '笔试', pro: '专业面', hr: 'HR面', final: '终面', onboard: '入职', eliminated: '淘汰' }
 const appNoticesList = ref([])
 const noticeEdit = ref(null) // { id, title, body }
 const noticeBusy = ref(false)
@@ -468,11 +497,8 @@ async function saveNoticeEdit() {
 // 发送前预览：弹窗里就是候选人弹窗的样子，标题/正文可以直接改，改完即发送
 const sendPreview = ref(null) // { id, title, body, stage }
 
-const sendPreviewTime = computed(() => {
-  const d = new Date()
-  const p2 = (x) => String(x).padStart(2, '0')
-  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
-})
+// 预览时间与候选人端显示一致（toLocaleString 本地化格式）
+const sendPreviewTime = computed(() => new Date().toLocaleString())
 
 function openSendPreview(n) {
   // 边界：候选人没有手机号 = 没开通候选人端账号，通知发出去也没人能收到，直接提示失败
@@ -570,10 +596,24 @@ async function generateEvaluation() {
         <span v-if="app" class="muted">{{ app.position?.position_name }}</span>
       </div>
       <div v-if="app">
-        <el-button type="primary" :disabled="!isPending" @click="advance('pass')">
+        <el-tag size="small" effect="plain" class="stage-owner-tag" title="当前关的负责人 HR（首次编辑该关的 HR 自动认领）">
+          {{ STAGE_LABEL[app.current_stage] }}负责人：{{ stageOwnerName(app.current_stage) || '未认领' }}
+        </el-tag>
+        <el-button
+          type="primary"
+          :disabled="!isPending || !currentStageEditable"
+          :title="currentStageEditable ? '' : '本阶段由其他 HR 负责，你只能查看'"
+          @click="advance('pass')"
+        >
           通过「{{ STAGE_LABEL[app.current_stage] }}」
         </el-button>
-        <el-button type="danger" plain :disabled="!isPending" @click="advance('fail')">淘汰</el-button>
+        <el-button
+          type="danger"
+          plain
+          :disabled="!isPending || !currentStageEditable"
+          :title="currentStageEditable ? '' : '本阶段由其他 HR 负责，你只能查看'"
+          @click="advance('fail')"
+        >淘汰</el-button>
         <el-button :disabled="!canRevert" @click="revert">撤回</el-button>
       </div>
     </div>
@@ -584,6 +624,10 @@ async function generateEvaluation() {
         <div class="meta-item">
           <span class="meta-label">姓名</span>
           <span class="meta-value">{{ app.candidate?.name }}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">负责人</span>
+          <span class="meta-value">{{ app.candidate_owner_name || '暂无' }}</span>
         </div>
         <div class="meta-item">
           <span class="meta-label">来源</span>
@@ -933,6 +977,14 @@ async function generateEvaluation() {
                 <el-tag v-if="selectedNote.result" size="small" effect="light" :type="selectedNote.result === 'pass' ? 'success' : 'danger'">
                   {{ RESULT_LABEL[selectedNote.result] }}
                 </el-tag>
+                <el-tag
+                  size="small"
+                  :type="selectedStageEditable ? 'success' : 'info'"
+                  :effect="selectedStageEditable ? 'light' : 'plain'"
+                  :title="selectedStageEditable ? '你是本关负责人（或关卡未认领）' : '本阶段由其他 HR 负责，你只能查看'"
+                >
+                  负责人：{{ stageOwnerName(selectedNote.stage) || '未认领' }}
+                </el-tag>
               </div>
 
               <div class="note-panel">
@@ -940,7 +992,7 @@ async function generateEvaluation() {
                 <el-form-item label="结果">
                   <el-select
                     v-model="noteResult"
-                    :disabled="!noteResultEditable"
+                    :disabled="!noteResultEditable || !selectedStageEditable"
                     style="width: 100%"
                     @change="onNoteResultChange"
                   >
@@ -1014,7 +1066,9 @@ async function generateEvaluation() {
               </el-form-item>
 
                 <div class="span-2 note-save">
-                  <el-button type="primary" :loading="noteSaving" @click="saveNoteInline">保存本关记录</el-button>
+                  <el-button type="primary" :loading="noteSaving" :disabled="!selectedStageEditable" @click="saveNoteInline">
+                    {{ selectedStageEditable ? '保存本关记录' : '本阶段由其他 HR 负责，只读' }}
+                  </el-button>
                 </div>
               </el-form>
               </div>
@@ -1508,6 +1562,11 @@ async function generateEvaluation() {
   display: flex;
   gap: var(--ats-sp-2);
   margin-top: var(--ats-sp-3);
+}
+
+.stage-owner-tag {
+  margin-right: var(--ats-sp-2);
+  color: var(--el-text-color-regular);
 }
 
 /* ---- 发送前预览（候选人弹窗样式）---- */

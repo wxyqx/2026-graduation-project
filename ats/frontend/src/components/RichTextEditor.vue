@@ -10,6 +10,9 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '' },
   minHeight: { type: Number, default: 90 },
+  // 可选：占位符插入按钮（通知模板用）——[{ label: '候选人姓名', value: '{候选人}' }, …]
+  // 点击在光标处插入 value（纯文本），发送时后端替换成真实值
+  placeholders: { type: Array, default: null },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -57,6 +60,13 @@ function insertLink() {
   exec('createLink', url)
 }
 
+// 在光标处插入纯文本（占位符用）：insertText 保留光标位置，插完同步 v-model
+function insertText(text) {
+  editor.value?.focus()
+  document.execCommand('insertText', false, text)
+  onInput()
+}
+
 const FONT_SIZES = [
   { value: 2, label: '小' },
   { value: 3, label: '标准' },
@@ -102,6 +112,19 @@ watch(
       <span class="rte-sep" />
       <button type="button" class="rte-btn" title="插入链接" @click.prevent="insertLink">链接</button>
       <button type="button" class="rte-btn" title="清除格式" @click.prevent="exec('removeFormat')">清除</button>
+      <template v-if="placeholders?.length">
+        <span class="rte-sep" />
+        <button
+          v-for="p in placeholders"
+          :key="p.value"
+          type="button"
+          class="rte-btn rte-ph"
+          :title="`插入占位符：发送时自动替换（${p.hint || p.label}）`"
+          @click.prevent="insertText(p.value)"
+        >
+          {{ p.label }}
+        </button>
+      </template>
     </div>
     <div
       ref="editor"
@@ -149,6 +172,17 @@ watch(
 }
 .rte-size {
   font-weight: var(--ats-fw-medium);
+}
+/* 占位符按钮：与普通工具按钮区分，提示这是会被替换的特殊标记 */
+.rte-ph {
+  color: var(--el-color-primary);
+  border: 1px dashed var(--el-color-primary-light-5);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+.rte-ph:hover {
+  background: var(--el-color-primary-light-9);
 }
 .rte-sep {
   width: 1px;
