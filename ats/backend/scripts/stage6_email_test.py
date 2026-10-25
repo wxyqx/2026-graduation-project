@@ -96,7 +96,7 @@ def main() -> int:
         db.add(app)
         db.commit()
         H = {"Authorization": f"Bearer {create_access_token(hr.id, 'hr')}"}
-        APP, CAND_ID = app.id, cand.id
+        APP = app.id
         db.close()
 
         # ---- 1. SMTP 配置保存 + 授权码不回显 ----
@@ -139,8 +139,6 @@ def main() -> int:
         r = c.post(f"/api/applications/{APP}/advance", headers=H,
                    json={"fromStage": "phone", "result": "pass"})
         check(r.status_code == 200, "推进 phone 关（生成通过通知草稿）", r.text[:120])
-        detail = c.get(f"/api/applications/{APP}", headers=H).json()
-        # 通过 phone 关 → current_stage 变 test，phone 通知草稿已生成
         r = c.get(f"/api/applications/{APP}/notices", headers=H).json()
         draft = next(x for x in r if x["stage"] == "phone" and x["send_time"] is None)
         r = c.post(f"/api/applications/{APP}/notices/{draft['id']}/send", headers=H)
