@@ -100,17 +100,17 @@ def send_eliminate_notice(db: Session, app: Application, stage: str) -> None:
     if exists is not None:
         return
     values = _template_values(db, app, stage)
-    db.add(
-        CandidateNotice(
-            candidate_id=app.can_id,
-            application_id=app.id,
-            stage="eliminated",
-            title=_render(cfg.get("title") or "", values)[:100] or "应聘结果通知",
-            body=_render(cfg.get("body") or "", values)[:5000] or None,
-            send_time=datetime.now(),  # 立即发送，不等 HR 确认
-        )
+    notice = CandidateNotice(
+        candidate_id=app.can_id,
+        application_id=app.id,
+        stage="eliminated",
+        title=_render(cfg.get("title") or "", values)[:100] or "应聘结果通知",
+        body=_render(cfg.get("body") or "", values)[:5000] or None,
+        send_time=datetime.now(),  # 立即发送，不等 HR 确认
     )
+    db.add(notice)
     db.flush()
+    return notice.id  # 交给 BackgroundTasks 异步补发邮件
 
 
 # ---- 淘汰销号：淘汰后 ELIMINATE_KEEP_DAYS 天内还能登录看通知，过期登录被拦 ----

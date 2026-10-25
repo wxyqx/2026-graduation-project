@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_admin
 from app.models import AiApiConfig, User
 from app.schemas.ai_config import AiConfigIn, AiConfigOut, AiConfigUpdate
+from app.services import email_service
 from app.services import prompt as prompt_svc
 from app.services import settings as settings_svc
 from app.services.log_service import log_action
@@ -145,3 +146,55 @@ def save_prompt(body: AiPromptIn, db: Session = Depends(get_db), current: User =
     log_action(db, current, "config_change", target_type="ai_config", detail={"field": "ai_prompt"})
     db.commit()
     return _prompt_out(db, current)
+
+
+# ---------- SMTP 邮件配置（通知的邮件渠道） ----------
+
+class EmailSmtpIn(BaseModel):
+    """SMTP 发件配置。password 传空 = 保持原密码不变。"""
+
+    enabled: bool = Field(default=False, description="是否启用邮件渠道")
+    host: str = Field(default="", description="SMTP 服务器，如 smtp.qq.com")
+    port: int = Field(default=465, description="端口：465=SSL（推荐）/ 587=STARTTLS")
+    use_ssl: bool = Field(default=True, description="true=SSL（465）/ false=STARTTLS（587）")
+    username: str = Field(default="", description="发件邮箱账号")
+    password: str = Field(default="", description="授权码（不是邮箱登录密码）；留空 = 保持原值")
+    sender_name: str = Field(default="ATS 招聘系统", description="发件人显示名")
+    site_url: str = Field(default="", description="候选人端登录地址，会附在邮件末尾")
+
+
+class EmailTestIn(BaseModel):
+    to: str = Field(description="收件邮箱（发一封测试邮件验证配置）")
+
+
+@router.get("/email-smtp")
+def get_email_smtp(db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """读 SMTP 配置（授权码不回显，只回 has_password）"""
+    cfg = email_service.get_email_config(db)
+    has_password = bool(cfg.get("password"))
+    cfg["password"] = ""
+    cfg["has_password"] = has_password
+    return cfg
+
+
+@router.put("/email-smtp")
+def set_email_smtp(body: EmailSmtpIn, db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """保存 SMTP 配置（password 留空 = 保持原授权码）"""
+    try:
+        cfg = email_service.set_email_config(db, body.model_dump())
+        db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    has_password = bool(cfg.get("password"))
+    cfg["password"] = ""
+    cfg["has_password"] = has_password
+    return cfg
+
+
+@router.post("/email-smtp/test")
+def test_email_smtp(body: EmailTestIn, db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """发一封测试邮件，验证 SMTP 配置；返回 error=null 即成功"""
+    err = email_service.send_test_email(db, body.to)
+    if err:
+        raise HTTPException(status_code=400, detail=f"发送失败：{err}")
+    return {"ok": True}

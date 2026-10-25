@@ -18,6 +18,51 @@ async function load() {
 }
 onMounted(load)
 
+// ---- SMTP 邮件配置（通知的邮件渠道）----
+const smtp = reactive({
+  enabled: false, host: '', port: 465, use_ssl: true,
+  username: '', password: '', has_password: false,
+  sender_name: 'ATS 招聘系统', site_url: 'http://127.0.0.1:5173/portal/login',
+})
+const smtpSaving = ref(false)
+const smtpTo = ref('')
+const smtpTesting = ref(false)
+
+async function loadSmtp() {
+  const d = await techEmailApi.get()
+  Object.assign(smtp, d)  // password 恒为空（后端不回显）
+}
+
+async function saveSmtp() {
+  if (smtp.enabled && (!smtp.host || !smtp.username)) {
+    ElMessage.warning('启用邮件渠道需要填 SMTP 服务器和发件邮箱')
+    return
+  }
+  smtpSaving.value = true
+  try {
+    const d = await techEmailApi.save({ ...smtp })
+    Object.assign(smtp, d)
+    ElMessage.success('SMTP 配置已保存')
+  } finally {
+    smtpSaving.value = false
+  }
+}
+
+async function testSmtp() {
+  if (!smtpTo.value) {
+    ElMessage.warning('先填收件邮箱（配置会先保存）')
+    return
+  }
+  smtpTesting.value = true
+  try {
+    await saveSmtp()
+    await techEmailApi.test(smtpTo.value)
+    ElMessage.success('测试邮件已发出，请查收（没收到看看垃圾箱）')
+  } finally {
+    smtpTesting.value = false
+  }
+}
+
 // ---- 提示词 ----
 const promptRules = ref('')
 const promptDefault = ref('')
@@ -33,6 +78,7 @@ async function loadPrompt() {
   promptSaved.value = d.is_custom
 }
 onMounted(loadPrompt)
+onMounted(loadSmtp)
 
 async function savePrompt() {
   savingPrompt.value = true
@@ -174,6 +220,54 @@ async function remove(row) {
           </template>
         </el-table-column>
       </el-table>
+    </section>
+
+    <section class="ats-panel">
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px">
+        <span class="ats-panel-title" style="margin: 0">SMTP 邮件配置</span>
+        <el-switch v-model="smtp.enabled" active-text="启用邮件渠道" />
+      </div>
+      <p class="muted" style="margin-top: 0">
+        启用后，HR 发送通知（通过 / 入职 / 淘汰）且候选人档案里有邮箱时，系统异步补发一封同样内容的邮件。
+        发送失败不影响站内通知。个人邮箱（QQ / 163）用「授权码」，不是登录密码。
+      </p>
+      <el-form label-width="110px" :disabled="!smtp.enabled" style="max-width: 560px">
+        <el-form-item label="SMTP 服务器">
+          <el-input v-model="smtp.host" placeholder="如 smtp.qq.com" />
+        </el-form-item>
+        <el-form-item label="端口">
+          <el-radio-group v-model="smtp.use_ssl">
+            <el-radio :value="true">465（SSL）</el-radio>
+            <el-radio :value="false">587（STARTTLS）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="发件邮箱">
+          <el-input v-model="smtp.username" placeholder="如 ats@example.com" />
+        </el-form-item>
+        <el-form-item label="授权码">
+          <el-input
+            v-model="smtp.password"
+            type="password"
+            show-password
+            :placeholder="smtp.has_password ? '已保存（填新值即覆盖）' : '邮箱服务商的 SMTP 授权码'"
+          />
+        </el-form-item>
+        <el-form-item label="发件人显示名">
+          <el-input v-model="smtp.sender_name" />
+        </el-form-item>
+        <el-form-item label="候选人端地址">
+          <el-input v-model="smtp.site_url" placeholder="邮件末尾附的登录链接；穿透/部署后改成公网地址" />
+        </el-form-item>
+        <el-form-item label="测试">
+          <div style="display: flex; gap: 8px; width: 100%">
+            <el-input v-model="smtpTo" placeholder="收件邮箱" />
+            <el-button :loading="smtpTesting" @click="testSmtp">保存并发送测试邮件</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+      <div style="margin-top: 8px">
+        <el-button type="primary" :loading="smtpSaving" @click="saveSmtp">保存 SMTP 配置</el-button>
+      </div>
     </section>
 
     <section class="ats-panel prompt-panel">

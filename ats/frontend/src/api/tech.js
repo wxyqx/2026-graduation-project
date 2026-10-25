@@ -36,6 +36,12 @@ export const techCandidateOwnerApi = {
   batchSetOwner: (candidate_ids, owner_id) => techHttp.put('/candidate-owners/batch', { candidate_ids, owner_id }),
 }
 
+export const techEmailApi = {
+  get: () => techHttp.get('/email-smtp'),
+  save: (data) => techHttp.put('/email-smtp', data),
+  test: (to) => techHttp.post('/email-smtp/test', { to }),
+}
+
 export const techConfigApi = {
   list: () => techHttp.get('/ai-configs'),
   create: (data) => techHttp.post('/ai-configs', data),

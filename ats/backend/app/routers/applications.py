@@ -12,7 +12,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -22,7 +22,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_hr
 from app.models import Application, Candidate, CandidateNotice, Position, User
 from app.schemas.application import AdvanceIn, ApplicationCreate, RevertIn, StageNoteIn
-from app.services import notice_service, ownership
+from app.services import email_service, notice_service, ownership
 from app.services import positions as positions_svc
 from app.services import state_machine as sm
 from app.services.log_service import log_action
@@ -207,7 +207,11 @@ def get_application(app_id: AppId, db: Session = Depends(get_db)):
 
 @router.post("/{app_id}/advance")
 def advance(
-    app_id: AppId, body: AdvanceIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)
+    app_id: AppId,
+    body: AdvanceIn,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_hr),
 ):
     """推进一关：给当前关打分（通过 / 淘汰）
 
@@ -266,7 +270,9 @@ def advance(
         notice_service.send_stage_notice(db, a, body.from_stage)
     elif body.result == "fail" and a.overall_status == "fail":
         # 就此淘汰：按「淘汰」模板立即发通知（候选人保留期内登录可见；超期销号拦截时也用它渲染）
-        notice_service.send_eliminate_notice(db, a, body.from_stage)
+        eliminate_notice_id = notice_service.send_eliminate_notice(db, a, body.from_stage)
+        if eliminate_notice_id is not None:
+            background_tasks.add_task(email_service.send_notice_email, eliminate_notice_id)
     db.commit()
     db.refresh(a)
     return application_detail(a, db)
@@ -321,7 +327,11 @@ def edit_app_notice(
 
 @router.post("/{app_id}/notices/{notice_id}/send")
 def send_app_notice(
-    app_id: AppId, notice_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_hr),
+    app_id: AppId,
+    notice_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_hr),
 ):
     """发送通知给候选人（写入发送时间，候选人登录即弹窗）；重复调用幂等"""
     a = _get_or_404(db, app_id)
@@ -339,6 +349,8 @@ def send_app_notice(
         "candidate_id": a.can_id, "application_id": app_id, "stage": n.stage, "sent": True,
     })
     db.commit()
+    # 邮件是附赠渠道：SMTP 启用且候选人有 email 时，响应返回后异步补发一封同样内容的邮件
+    background_tasks.add_task(email_service.send_notice_email, notice_id)
     return {"id": n.id, "send_time": n.send_time}
 
 

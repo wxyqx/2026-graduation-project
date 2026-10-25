@@ -19,6 +19,7 @@
 隐私：简历原文和 PDF 全程只在内存里，不存数据库、不存硬盘。只有「结果」（pass/fail + 理由）会被记下来。
 """
 import asyncio
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +57,7 @@ class IntakeItem:
     candidate_id: int | None = None
     candidate_name: str | None = None
     phone: str | None = None  # AI 从简历里识别到的手机号（识别不到为 None）
+    email: str | None = None  # 从简历原文里抽取的邮箱（正则，不依赖 AI）
     position_id: int | None = None
     position_name: str | None = None
     application_id: int | None = None
@@ -155,6 +157,13 @@ def _persist(db: Session, item: IntakeItem, now: datetime, owner_id: int | None 
     item.phone = phone
     item.candidate_name = name
     item.ai_comment = reason or None
+    # 邮箱直接从简历原文抽（简历里基本都带，不必依赖 AI 回答）
+    email = None
+    if item.text:
+        m_email = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", item.text)
+        if m_email:
+            email = m_email.group(0).strip(".").lower()
+    item.email = email
 
     # ---- 检查岗位：没匹配上就不建档 ----
     if position is None:
@@ -196,14 +205,17 @@ def _persist(db: Session, item: IntakeItem, now: datetime, owner_id: int | None 
 
     if candidate is None:
         candidate = Candidate(
-            name=name, phone=phone, remark=remark, owner_id=owner_id, create_time=now, update_time=now
-        )  # owner_id：上传简历的 HR 默认成为候选人负责人
+            name=name, phone=phone, email=email, remark=remark, owner_id=owner_id,
+            create_time=now, update_time=now
+        )  # owner_id：上传简历的 HR 默认成为候选人负责人；email 供通知邮件使用
         db.add(candidate)
         db.flush()  # flush = 先写进数据库拿到自动分配的 ID，但还没最终确认（commit）
     else:
         if phone and not candidate.phone:
             candidate.phone = phone
             candidate.update_time = now
+        if email and not (candidate.email or "").strip():
+            candidate.email = email  # 通知邮件的收件地址；不覆盖已有值
     item.candidate_id = candidate.id
     item.candidate_name = candidate.name or name
     # 有手机号就确保候选人有登录账号（默认密码 admin）
