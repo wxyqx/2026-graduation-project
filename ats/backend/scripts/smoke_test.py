@@ -94,6 +94,14 @@ def run():
     check(c.post("/api/auth/login", json={"username": ua, "password": pw}).status_code == 401, "旧密码失效 401")
     check(c.post("/api/auth/login", json={"username": ua, "password": "newsecret456", "phone": "13700000001", "real_name": "测试HR"}).status_code == 200, "新密码可登录")
 
+    print("== HR 登录限流")
+    rl_user = f"rl_{STAMP}"
+    c.post("/api/auth/register", json={"username": rl_user, "password": pw, "real_name": "测试HR", "phone": "136" + STAMP[-8:]})
+    for _ in range(5):
+        c.post("/api/auth/login", json={"username": rl_user, "password": "totally-wrong"})
+    r = c.post("/api/auth/login", json={"username": rl_user, "password": pw})
+    check(r.status_code == 429, f"HR 连续 5 次失败后锁定 429（实际 {r.status_code}）")
+
     print("== positions")
     r = c.post("/api/positions", headers=H, json={"position_name": f"Java工程师_{STAMP}", "owner": "HR-A",
                                                   "position_requirements": "3年以上Java，熟悉Spring Boot/MySQL"})

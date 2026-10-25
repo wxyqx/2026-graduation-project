@@ -36,6 +36,8 @@ class User(Base):
         "candidate_id", Integer, ForeignKey("Candidate.ID", ondelete="SET NULL"), nullable=True, unique=True
     )
     is_active: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)  # 0=停用，禁止登录
+    # 1=还在用默认密码：候选人每次登录都会弹「请修改密码」强提示，改完密码清零
+    must_change_password: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     # 淘汰销号后的恢复时间：技术管理员在保存期（3 个月）内恢复账号时写入；
     # 晚于某次淘汰时间的恢复记录会让那次淘汰不再拦截登录
     restore_time: Mapped[datetime | None] = mapped_column(DateTime)

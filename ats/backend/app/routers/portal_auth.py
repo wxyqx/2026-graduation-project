@@ -45,7 +45,11 @@ def _candidate_out(c: Candidate) -> PortalCandidateOut:
 
 def _user_out(u: User) -> PortalUserOut:
     return PortalUserOut(
-        id=u.id, role=u.role, candidate_id=u.candidate_id, is_active=bool(getattr(u, "is_active", 1))
+        id=u.id,
+        role=u.role,
+        candidate_id=u.candidate_id,
+        is_active=bool(getattr(u, "is_active", 1)),
+        must_change_password=bool(getattr(u, "must_change_password", 0)),
     )
 
 
@@ -175,6 +179,7 @@ def change_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密码不能和当前密码相同")
 
     current.password_hash = hash_password(body.new_password)
+    current.must_change_password = 0  # 改密成功：清掉「默认密码」强提示
     log_action(db, current, "update", target_type="user", target_id=current.id, detail={"field": "password"}, ip=_ip(request))
     db.commit()
     db.refresh(current)

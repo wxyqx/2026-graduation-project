@@ -88,6 +88,7 @@ CREATE TABLE `User` (
   `role`           VARCHAR(20) NOT NULL DEFAULT 'hr' COMMENT 'candidate=候选人 / hr=HR / admin=技术管理员',
   `candidate_id`   INT DEFAULT NULL COMMENT '候选人账号关联的 Candidate.ID',
   `is_active`      TINYINT NOT NULL DEFAULT 1 COMMENT '0=停用，禁止登录',
+  `must_change_password` TINYINT NOT NULL DEFAULT 0 COMMENT '1=还在用默认密码，登录强提示改密；改密成功清零',
   `restore_time`   DATETIME DEFAULT NULL COMMENT '淘汰销号账号的恢复时间；恢复后该次淘汰不再拦截登录',
   `last_login_time` DATETIME DEFAULT NULL COMMENT '最近登录时间',
   `last_login_ip`  VARCHAR(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近登录 IP',

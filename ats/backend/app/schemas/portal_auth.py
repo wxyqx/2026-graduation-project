@@ -39,6 +39,7 @@ class PortalUserOut(BaseModel):
     role: str = Field(description="角色，固定 candidate")
     candidate_id: int | None = Field(description="关联的候选人编号")
     is_active: bool = Field(description="账号是否启用")
+    must_change_password: bool = Field(default=False, description="true=还在用默认密码，应提示修改")
 
 
 class PortalTokenOut(BaseModel):

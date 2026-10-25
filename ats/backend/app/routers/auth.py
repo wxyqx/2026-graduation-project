@@ -21,7 +21,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_hr
 from app.models import User
 from app.schemas.auth import LoginIn, ProfileUpdateIn, RegisterIn, TokenOut, UserOut
-from app.services import avatar_service
+from app.services import avatar_service, ratelimit
 from app.services.phone import is_valid_phone, normalize_phone
 from app.services.security import create_access_token, hash_password, verify_password
 
@@ -119,9 +119,20 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 **可能出错**：
 - 401：用户名或密码错了。故意不区分是「用户名不存在」还是「密码错」，防止别人试探哪些用户名存在。
 """
+    # 限流：同一用户名 10 分钟内最多失败 5 次（与候选人端同一套规则）
+    window = settings.login_lock_minutes * 60
+    key = f"hr_login:{body.username}"
+    if ratelimit.too_many(key, settings.login_max_failures, window):
+        wait = ratelimit.remaining_seconds(key, window)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"登录失败次数过多，请 {max(1, wait // 60)} 分钟后再试",
+        )
+
     user = db.scalar(select(User).where(User.username == body.username))
     # 用户不存在、或密码对不上，都回同一句话——不告诉攻击者「用户名是对的，只是密码错了」
     if user is None or not verify_password(body.password, user.password_hash):
+        ratelimit.record_failure(key, window)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     # 这里只允许 HR 登录；候选人和技术管理员走各自的入口
     if user.role != "hr":
@@ -131,6 +142,7 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
         )
     if getattr(user, "is_active", 1) == 0:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已停用，请联系管理员")
+    ratelimit.reset(key)  # 登录成功：清空失败记录
     return TokenOut(token=create_access_token(user.id, user.role), user=_user_out(user))
 
 

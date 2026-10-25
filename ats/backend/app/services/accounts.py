@@ -57,6 +57,7 @@ def ensure_candidate_account(db: Session, candidate: Candidate, *, create: bool 
         role="candidate",
         candidate_id=candidate.id,
         is_active=1,
+        must_change_password=1,  # 默认密码开局：每次登录强提示改密，改完清零
         create_time=datetime.now(),
     )
     db.add(user)
@@ -65,6 +66,7 @@ def ensure_candidate_account(db: Session, candidate: Candidate, *, create: bool 
 
 
 def reset_candidate_password(user: User) -> None:
-    """把密码重置为默认密码（admin），并重新启用账号。"""
+    """把密码重置为默认密码（admin），并重新启用账号。重置后回到「请修改密码」状态。"""
     user.password_hash = hash_password(settings.default_candidate_password)
     user.is_active = 1
+    user.must_change_password = 1

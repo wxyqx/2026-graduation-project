@@ -186,6 +186,7 @@ def reset_password(user_id: int, db: Session = Depends(get_db), current: User = 
     if user is None:
         raise HTTPException(status_code=404, detail="账号不存在")
     user.password_hash = hash_password(settings.default_candidate_password)
+    user.must_change_password = 1  # 重置回默认密码：下次登录重新提示改密
     log_action(db, current, "reset_password", target_type="user", target_id=user.id)
     db.commit()
     db.refresh(user)

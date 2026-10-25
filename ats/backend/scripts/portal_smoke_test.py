@@ -97,6 +97,7 @@ def main() -> int:
         login1 = r.json()
         check("角色是 candidate", login1["user"]["role"] == "candidate", str(login1["user"]))
         check("返回关联的候选人编号", login1["user"]["candidate_id"] == c1["id"], str(login1["user"]))
+        check("默认密码登录：must_change_password=true", login1["user"]["must_change_password"] is True, str(login1["user"]))
         cand_token = login1["token"]
         C = {"Authorization": f"Bearer {cand_token}"}
 
@@ -122,6 +123,7 @@ def main() -> int:
 
         r = client.put("/api/portal/auth/password", headers=C, json={"current_password": "admin", "new_password": "newpass123"})
         check("改密成功", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+        check("改密后 must_change_password=false", r.json()["user"]["must_change_password"] is False, r.text[:150])
         C = {"Authorization": f"Bearer {r.json()['token']}"}
 
         r = client.post("/api/portal/auth/login", json={"phone": phone1, "password": "admin"})

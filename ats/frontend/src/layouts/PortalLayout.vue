@@ -5,7 +5,7 @@
   内容区最大宽 720，桌面上居中显示，不做成后台那种左菜单。
 -->
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { portalApplicationApi, portalAuthApi, portalNoticeApi, portalPositionApi } from '../api/portal'
@@ -73,6 +73,46 @@ async function loadStats() {
     }
   } catch {
     /* 401 时拦截器处理；统计失败不影响页面 */
+  }
+}
+
+// ---- 默认密码强提示：must_change_password=1 时每次登录都弹，改密成功才消失 ----
+const pwdPromptVisible = ref(false)
+const pwdPromptForm = reactive({ current_password: '', new_password: '', confirm: '' })
+const pwdPromptBusy = ref(false)
+
+watch(
+  () => portalAuth.user.value?.must_change_password,
+  (v) => {
+    pwdPromptVisible.value = !!v
+    if (v) {
+      pwdPromptForm.current_password = ''
+      pwdPromptForm.new_password = ''
+      pwdPromptForm.confirm = ''
+    }
+  },
+  { immediate: true },
+)
+
+async function submitPwdPrompt() {
+  if (pwdPromptForm.new_password.length < 6) {
+    ElMessage.warning('新密码至少 6 位')
+    return
+  }
+  if (pwdPromptForm.new_password !== pwdPromptForm.confirm) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+  pwdPromptBusy.value = true
+  try {
+    const data = await portalAuthApi.changePassword(pwdPromptForm.current_password, pwdPromptForm.new_password)
+    portalAuth.setAuth(data.token, data.user, data.candidate)
+    ElMessage.success('密码已修改')
+    pwdPromptVisible.value = false
+  } catch {
+    /* 拦截器已提示（当前密码错误等），弹窗保持 */
+  } finally {
+    pwdPromptBusy.value = false
   }
 }
 
@@ -216,6 +256,34 @@ watch(
         <span>{{ item.label }}</span>
       </router-link>
     </nav>
+
+    <!-- 默认密码强提示：不可点遮罩关闭，改密或「稍后再说」（下次登录还会弹） -->
+    <el-dialog
+      v-model="pwdPromptVisible"
+      title="请修改默认密码"
+      width="420px"
+      :close-on-click-modal="false"
+      :show-close="false"
+    >
+      <p class="muted" style="margin-top: 0">
+        你的账号仍在使用默认密码，为保护简历与个人信息，请尽快修改；每次登录都会提醒，直到修改完成。
+      </p>
+      <el-form label-width="88px" @submit.prevent>
+        <el-form-item label="当前密码">
+          <el-input v-model="pwdPromptForm.current_password" type="password" show-password placeholder="默认密码 admin" />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="pwdPromptForm.new_password" type="password" show-password maxlength="72" placeholder="至少 6 位" />
+        </el-form-item>
+        <el-form-item label="确认新密码">
+          <el-input v-model="pwdPromptForm.confirm" type="password" show-password maxlength="72" placeholder="再输一遍" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdPromptVisible = false">稍后再说</el-button>
+        <el-button type="primary" :loading="pwdPromptBusy" @click="submitPwdPrompt">修改密码</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 通过关卡通知：有未读就弹出（类似邮件） -->
     <el-dialog
