@@ -8,7 +8,7 @@
   4. AI 配置：创建 / 列表 / 启停 / 修改 / 删除
   5. AI 提示词：读取 / 保存 / 恢复原值
   6. 操作日志：分页与筛选
-  7. 备份 ZIP：12 个 CSV + manifest.json
+  7. 备份 ZIP：13 个 CSV + manifest.json
 
 运行（后端已启动，且存在 tech/admin 账号）：
     .venv\\Scripts\\python -B scripts\\tech_smoke_test.py
@@ -127,9 +127,9 @@ def main() -> int:
         z = zipfile.ZipFile(io.BytesIO(r.content))
         names = z.namelist()
         check("备份含 manifest.json", "manifest.json" in names)
-        check("备份含 12 个 CSV", len([n for n in names if n.startswith("csv/")]) == 12, str(len(names)))
+        check("备份含 13 个 CSV", len([n for n in names if n.startswith("csv/")]) == 13, str(len(names)))
         manifest = json.loads(z.read("manifest.json"))
-        check("manifest 记录 12 张表", len(manifest["tables"]) == 12)
+        check("manifest 记录 13 张表", len(manifest["tables"]) == 13)
 
     finally:
         # ---------- 清理：临时 HR、临时配置、恢复提示词 ----------

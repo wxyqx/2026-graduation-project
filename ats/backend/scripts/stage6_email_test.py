@@ -176,6 +176,69 @@ def main() -> int:
         time.sleep(1)
         check(len(RECEIVED) == n_now, "无新信件（无 email 不发）")
 
+        # ---- 5.5 发件箱重试：失败进箱 → 配置恢复 → 下次发送顺带清扫 ----
+        # 造第二个带邮箱的候选人 + 投递（phone 关通过）
+        s = SessionLocal()
+        cand2 = Candidate(name=f"邮件测试2_{STAMP}", phone=f"1399999{STAMP[-3:]}4",
+                          email=f"candidate2_{STAMP}@mock.local", owner_id=hr.id,
+                          create_time=datetime.now())
+        s.add(cand2)
+        s.flush()
+        app2 = Application(can_id=cand2.id, pos_id=pos.id, overall_status="pending",
+                           current_stage="phone", create_time=datetime.now())
+        s.add(app2)
+        s.commit()
+        app2_id = app2.id
+        s.close()
+        r = c.post(f"/api/applications/{app2_id}/advance", headers=H,
+                   json={"fromStage": "phone", "result": "pass"})
+        check(r.status_code == 200, "第二位候选人推进 phone", r.text[:120])
+        d1 = next(x for x in c.get(f"/api/applications/{app2_id}/notices", headers=H).json()
+                  if x["stage"] == "phone" and x["send_time"] is None)
+
+        # 配置指向死端口 → 发送必失败 → 发件箱应记 pending/attempts=1
+        c.put("/api/tech/email-smtp", headers=TM, json={
+            "enabled": True, "host": "127.0.0.1", "port": 9, "use_ssl": False,
+            "username": "ats@mock.local", "password": ""})
+        r = c.post(f"/api/applications/{app2_id}/notices/{d1['id']}/send", headers=H)
+        check(r.status_code == 200, "SMTP 故障时通知照常发送（邮件是附赠渠道）", r.text[:120])
+
+        def outbox_row(nid):
+            return next((x for x in c.get("/api/tech/email-outbox", headers=TM).json()
+                         if x["notice_id"] == nid), None)
+
+        deadline = time.time() + 8
+        row = None
+        while time.time() < deadline and row is None:
+            row = outbox_row(d1["id"])
+            if row is None:
+                time.sleep(0.3)
+        check(row is not None and row["status"] == "pending" and row["attempts"] == 1,
+              "失败进发件箱 pending/1 次", str(row))
+
+        # 配置恢复 mock → 推进 test 并发送新通知 → 发送前的清扫应把旧邮件补发出去
+        c.put("/api/tech/email-smtp", headers=TM, json={
+            "enabled": True, "host": "127.0.0.1", "port": MOCK_SMTP_PORT, "use_ssl": False,
+            "username": "ats@mock.local", "password": ""})
+        r = c.post(f"/api/applications/{app2_id}/advance", headers=H,
+                   json={"fromStage": "test", "result": "pass"})
+        check(r.status_code == 200, "推进 test", r.text[:120])
+        d2 = next(x for x in c.get(f"/api/applications/{app2_id}/notices", headers=H).json()
+                  if x["stage"] == "test" and x["send_time"] is None)
+        n_before = len(RECEIVED)
+        r = c.post(f"/api/applications/{app2_id}/notices/{d2['id']}/send", headers=H)
+        check(r.status_code == 200, "发送新通知", r.text[:120])
+        check(wait_mail(n_before + 2), "旧邮件（重试）与新邮件都送达")
+        deadline = time.time() + 8
+        row = None
+        while time.time() < deadline:
+            row = outbox_row(d1["id"])
+            if row and row["status"] == "sent":
+                break
+            time.sleep(0.3)
+        check(row is not None and row["status"] == "sent" and row["attempts"] == 2,
+              "发件箱重试成功 sent/2 次", str(row))
+
         # ---- 6. 测试发送接口：正常 / 错误配置 ----
         r = c.post("/api/tech/email-smtp/test", headers=TM, json={"to": f"admin_{STAMP}@mock.local"})
         check(r.status_code == 200 and wait_mail(n_now + 1), "测试发送接口可用")
@@ -203,7 +266,7 @@ def main() -> int:
                                              database=os.environ.get("ATS_DB_NAME", "ats"))
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT ID FROM Candidate WHERE name LIKE %s", (f"邮件测试{STAMP}",))
+                cur.execute("SELECT ID FROM Candidate WHERE name LIKE %s", (f"邮件测试%{STAMP}",))
                 for (cid,) in cur.fetchall():
                     cur.execute("SELECT ID FROM Application WHERE Can_ID=%s", (cid,))
                     for (aid,) in cur.fetchall():

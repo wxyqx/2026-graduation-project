@@ -34,6 +34,7 @@ TABLES = [
     "Form_Submission",
     "Form_Answer",
     "Operation_Log",
+    "Email_Outbox",
 ]
 
 FILE_TABLE = "Candidate_File"

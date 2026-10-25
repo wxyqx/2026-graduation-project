@@ -32,6 +32,7 @@ KEY_TABLES = [
     "Candidate", "Position", "Application", "User", "Candidate_File",
     "Candidate_Notice", "Form_Template", "Form_Submission", "Form_Answer",
     "Operation_Log", "App_Setting", "AI_API_Config", "Stage_Owner",
+    "Email_Outbox",
 ]
 
 

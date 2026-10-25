@@ -198,3 +198,28 @@ def test_email_smtp(body: EmailTestIn, db: Session = Depends(get_db), current: U
     if err:
         raise HTTPException(status_code=400, detail=f"发送失败：{err}")
     return {"ok": True}
+
+
+@router.get("/email-outbox")
+def list_email_outbox(
+    db: Session = Depends(get_db), current: User = Depends(get_current_admin)
+):
+    """邮件发件箱：每封通知邮件的投递状态（pending 重试中 / sent 已送达 / failed 放弃），新的在前。"""
+    from sqlalchemy import select
+
+    from app.models import EmailOutbox
+
+    rows = db.scalars(select(EmailOutbox).order_by(EmailOutbox.id.desc()).limit(100)).all()
+    return [
+        {
+            "id": r.id,
+            "notice_id": r.notice_id,
+            "to_email": r.to_email,
+            "subject": r.subject,
+            "status": r.status,
+            "attempts": r.attempts,
+            "last_error": r.last_error,
+            "update_time": r.update_time,
+        }
+        for r in rows
+    ]

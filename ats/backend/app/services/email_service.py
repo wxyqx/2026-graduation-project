@@ -14,9 +14,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Candidate, CandidateNotice
+from app.models import Candidate, CandidateNotice, EmailOutbox
 from app.services.settings import get_setting, get_system_admin, set_setting
 
 EMAIL_KEY = "email_smtp"
@@ -131,6 +132,90 @@ def send_notice_email(notice_id: int) -> str | None:
         return None
 
 
+def _build_html(n, site: str) -> str:
+    return (
+        f"<div style=\"font-family: sans-serif; max-width: 640px\">"
+        f"<h3 style=\"margin: 0 0 8px\">{n.title}</h3>"
+        f"<div style=\"line-height: 1.8\">{n.body or ''}</div>"
+        f"<hr style=\"border: 0; border-top: 1px solid #eee; margin: 16px 0\">"
+        f"<p style=\"color: #888; font-size: 13px\">请登录候选人端查看详情与文件："
+        f"<a href=\"{site}\">{site}</a></p></div>"
+    )
+
+
+MAX_ATTEMPTS = 3  # 同一封邮件最多尝试 3 次（首次 + 2 次重试），超过标记 failed
+
+
+def _upsert_outbox(session, notice, to_email: str, ok: bool, error: str | None) -> None:
+    """发件箱记账：一条通知一行；失败 pending（未满次数）/ failed，成功 sent。"""
+    from datetime import datetime
+
+    row = session.scalar(select(EmailOutbox).where(EmailOutbox.notice_id == notice.id))
+    if row is None:
+        row = EmailOutbox(
+            notice_id=notice.id, to_email=to_email, subject=notice.title or "招聘通知",
+            status="pending", attempts=0, create_time=datetime.now(),
+        )
+        session.add(row)
+    row.attempts += 1
+    row.status = "sent" if ok else ("pending" if row.attempts < MAX_ATTEMPTS else "failed")
+    row.last_error = None if ok else (error or "")[:500]
+    row.update_time = datetime.now()
+    session.commit()
+
+
+def _deliver(session, notice, cand, cfg) -> str | None:
+    """构建并发送一封通知邮件，返回 None=成功 / 错误说明。"""
+    to_email = (cand.email or "").strip()
+    try:
+        _send(cfg, to_email, cand.name or to_email, notice.title or "招聘通知",
+              _build_html(notice, cfg.get("site_url") or ""))
+        return None
+    except Exception as e:
+        return str(e)
+
+
+def retry_outbox(session, limit: int = 5) -> int:
+    """清扫发件箱：把 pending（未满次数）的邮件重试一遍，返回成功条数。
+
+    触发时机：每次发送新邮件前、后端启动时。配置没启用就跳过。
+    """
+    cfg = get_email_config(session)
+    if not (cfg.get("enabled") and cfg.get("host") and cfg.get("username")):
+        return 0
+    rows = session.scalars(
+        select(EmailOutbox).where(EmailOutbox.status == "pending").order_by(EmailOutbox.id).limit(limit)
+    ).all()
+    sent = 0
+    for row in rows:
+        notice = session.get(CandidateNotice, row.notice_id) if row.notice_id else None
+        if notice is None:
+            continue
+        cand = session.get(Candidate, notice.candidate_id)
+        if cand is None:
+            continue
+        err = _deliver(session, notice, cand, cfg)
+        _upsert_outbox(session, notice, row.to_email, err is None, err)
+        if err is None:
+            sent += 1
+            print(f"[email] 重试成功 to={row.to_email}: {notice.title}")
+    return sent
+
+
+def startup_retry() -> None:
+    """后端启动时清扫一次发件箱（独立会话；异常吞掉，不影响启动）。"""
+    from app.core.database import SessionLocal
+
+    try:
+        session = SessionLocal()
+        try:
+            retry_outbox(session)
+        finally:
+            session.close()
+    except Exception as e:
+        print(f"[email] 启动清扫失败（忽略）：{e}")
+
+
 def _send_notice_email_impl(notice_id: int) -> str | None:
     from app.core.database import SessionLocal
     from app.services.log_service import log_action
@@ -147,36 +232,22 @@ def _send_notice_email_impl(notice_id: int) -> str | None:
         # 密码可选（内网 relay 免认证）；host + username 必需
         if not (cfg.get("enabled") and cfg.get("host") and cfg.get("username")):
             return None
+
+        retry_outbox(session)  # 顺带清扫之前失败的邮件（best effort）
+
         to_email = cand.email.strip()
-        to_name = cand.name or to_email
-        site = cfg.get("site_url") or ""
-        html = (
-            f"<div style=\"font-family: sans-serif; max-width: 640px\">"
-            f"<h3 style=\"margin: 0 0 8px\">{n.title}</h3>"
-            f"<div style=\"line-height: 1.8\">{n.body or ''}</div>"
-            f"<hr style=\"border: 0; border-top: 1px solid #eee; margin: 16px 0\">"
-            f"<p style=\"color: #888; font-size: 13px\">请登录候选人端查看详情与文件："
-            f"<a href=\"{site}\">{site}</a></p></div>"
-        )
-        try:
-            _send(cfg, to_email, to_name, n.title or "招聘通知", html)
-        except Exception as e:  # 邮件失败不影响通知；写操作日志便于排查
-            admin = get_system_admin(session)
-            if admin is not None:
-                log_action(
-                    session, admin, "update", target_type="notice", target_id=notice_id,
-                    detail={"email_sent": False, "email_error": str(e)[:200], "to": to_email},
-                )
-                session.commit()
-            print(f"[email] 发送失败 to={to_email}: {e}")
-            return str(e)
+        err = _deliver(session, n, cand, cfg)
+        _upsert_outbox(session, n, to_email, err is None, err)
         admin = get_system_admin(session)
         if admin is not None:
             log_action(
                 session, admin, "update", target_type="notice", target_id=notice_id,
-                detail={"email_sent": True, "to": to_email},
+                detail={"email_sent": err is None, "to": to_email, **({"email_error": err[:200]} if err else {})},
             )
             session.commit()
+        if err:
+            print(f"[email] 发送失败 to={to_email}（已进发件箱重试）: {err}")
+            return err
         print(f"[email] 已发送 to={to_email}: {n.title}")
         return None
     finally:

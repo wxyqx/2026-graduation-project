@@ -117,6 +117,14 @@ ai AI筛选 → resume 简历筛选 → phone 电话沟通
     openapi_tags=TAGS,
 )
 
+
+@app.on_event("startup")
+def _startup_email_retry() -> None:
+    """启动时清扫邮件发件箱：上次没发出去的（SMTP 瞬时故障）再试一轮。"""
+    from app.services.email_service import startup_retry
+
+    startup_retry()
+
 # CORS（跨域）：浏览器有个安全规矩——网页在 5173 端口，默认不许它去请求 8000 端口的接口。
 # 这里明确告诉浏览器：这两个地址来的请求我认，放行。
 app.add_middleware(
