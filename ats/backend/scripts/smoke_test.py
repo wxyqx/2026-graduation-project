@@ -139,8 +139,12 @@ def run():
     check(c.get("/api/applications", headers=H, params={"status": "pending"}).status_code == 200, "按状态筛选")
 
     # 两个小快捷函数：adv = 推进某一关，rev = 撤回。lambda 是「一行写完的小函数」
-    adv = lambda aid, fs, res: c.post(f"/api/applications/{aid}/advance", headers=H, json={"fromStage": fs, "result": res, "confirm_eliminate": res == "fail"})
-    rev = lambda aid, to=None: c.post(f"/api/applications/{aid}/revert", headers=H, json={"toStage": to} if to else {})
+    def adv(aid, fs, res):
+        return c.post(f"/api/applications/{aid}/advance", headers=H,
+                      json={"fromStage": fs, "result": res, "confirm_eliminate": res == "fail"})
+
+    def rev(aid, to=None):
+        return c.post(f"/api/applications/{aid}/revert", headers=H, json={"toStage": to} if to else {})
 
     check(adv(a1, "resume", "pass").status_code == 409, "fromStage 不匹配 409")
     check(adv(a1, "ai", "maybe").status_code == 400, "result 非法 400")
@@ -179,7 +183,8 @@ def run():
 
     print("== 各关记录：结果原因 / 面试评价（详情页编辑，不改流程）==")
     # 此时 a1 已走完全部 6 个人工关，正好逐个写记录。sn = 写某关记录
-    sn = lambda aid, stg, **kw: c.put(f"/api/applications/{aid}/stage-note", headers=H, json={"stage": stg, **kw})
+    def sn(aid, stg, **kw):
+        return c.put(f"/api/applications/{aid}/stage-note", headers=H, json={"stage": stg, **kw})
     check("reason" in detail["stages"][1] and "evaluation" in detail["stages"][1], "时间线含 reason/evaluation 键")
     st = {s["stage"]: s for s in detail["stages"]}
     check(sn(a1, "resume", reason="本科3年，符合岗位要求").json()["stages"][1]["reason"] == "本科3年，符合岗位要求", "简历筛选·写通过原因")
@@ -472,8 +477,8 @@ def run():
     _, ap_test_fail = new_cand_app(f"笔试淘汰_{STAMP}", p2)
     push(ap_test_fail, ["ai", "resume", "phone", "test"], ["pass"] * 3 + ["fail"])
     m_all = c.get("/api/stats/matrix", headers=H, params={"range": "all"}).json()
-    trow = next(r for r in m_all["rows"] if r["key"] == "test")
-    tidx = next(i for i, p in enumerate(m_all["positions"]) if p["id"] == p2)
+    check(any(r["key"] == "test" for r in m_all["rows"]), "交叉表含 test 行")
+    check(any(p["id"] == p2 for p in m_all["positions"]), "交叉表含该岗位列")
     tcell = c.get("/api/stats/matrix/cell", headers=H, params={"row": "test", "pos_id": p2, "range": "all"}).json()
     check(not any(x["app_id"] == ap_test_fail for x in tcell["people"]), "笔试淘汰 → 笔试行不计入（面试行才含淘汰）")
 

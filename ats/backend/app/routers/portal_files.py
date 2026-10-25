@@ -12,16 +12,24 @@ HR 端在投递详情「Offer 文件」页签能看到「已回传」标记并�
 from typing import Annotated
 from urllib.parse import quote
 
-from datetime import datetime
-
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Path,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_candidate
-from app.models import CandidateFile, User, CandidateNotice
+from app.models import CandidateFile, CandidateNotice, User
 from app.schemas.file import CandidateFileOut
 from app.services import file_service
 

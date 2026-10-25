@@ -21,22 +21,21 @@ from sqlalchemy.orm import DeclarativeBase
 class Base(DeclarativeBase):
     """所有表的「爸爸类」。每张表都继承它，SQLAlchemy 才认得这是一张表。"""
 
-    pass
 
 
 # 下面这几行必须放在 Base 定义之后（因为它们都要用到 Base），所以加了 noqa 告诉检查工具别报「import 不在开头」
-from app.models.user import User  # noqa: E402
-from app.models.position import Position  # noqa: E402
-from app.models.candidate import Candidate  # noqa: E402
-from app.models.application import Application  # noqa: E402
 from app.models.ai_api_config import AiApiConfig  # noqa: E402
 from app.models.app_setting import AppSetting  # noqa: E402
+from app.models.application import Application  # noqa: E402
+from app.models.candidate import Candidate  # noqa: E402
 from app.models.candidate_file import CandidateFile  # noqa: E402
 from app.models.candidate_notice import CandidateNotice  # noqa: E402
-from app.models.form_template import FormField, FormTemplate  # noqa: E402
 from app.models.form_submission import FormAnswer, FormSubmission  # noqa: E402
+from app.models.form_template import FormField, FormTemplate  # noqa: E402
 from app.models.operation_log import OperationLog  # noqa: E402
+from app.models.position import Position  # noqa: E402
 from app.models.stage_owner import StageOwner  # noqa: E402
+from app.models.user import User  # noqa: E402
 
 # 别的文件写 from app.models import User 就能拿到这些类
 __all__ = [

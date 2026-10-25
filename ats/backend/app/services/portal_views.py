@@ -11,7 +11,7 @@
 """
 from sqlalchemy import select
 
-from app.models import Application, CandidateFile, FormSubmission, Position
+from app.models import Application, CandidateFile, Position
 from app.services import file_service, form_service
 from app.services import state_machine as sm
 

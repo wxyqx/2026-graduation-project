@@ -9,13 +9,13 @@ HR 在投递详情「候选人通知」里逐人编辑后确认发送，发送�
 import re
 from datetime import datetime, timedelta
 
+import nh3
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Application, Candidate, CandidateFile, CandidateNotice, Position
 from app.services import settings as settings_svc
-import nh3
-from app.services.state_machine import STAGES, STAGE_FIELDS, STAGE_LABELS
+from app.services.state_machine import STAGE_FIELDS, STAGE_LABELS, STAGES
 
 # 淘汰候选人的账号保留期：淘汰后多少天内还能登录查看通知，过期销号
 ELIMINATE_KEEP_DAYS = 2
@@ -40,8 +40,6 @@ def send_stage_notice(db: Session, app: Application, stage: str) -> None:
     )
     if exists is not None:
         return
-    cand = db.get(Candidate, app.can_id)
-    pos = db.get(Position, app.pos_id) if app.pos_id else None
     values = _template_values(db, app, stage)
     def render(text: str) -> str:
         return _render(text, values)

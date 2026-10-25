@@ -11,7 +11,16 @@ from datetime import datetime
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Path,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,9 +29,8 @@ from app.core.database import get_db
 from app.core.deps import get_current_hr
 from app.models import Application, Candidate, CandidateFile, User
 from app.schemas.file import CandidateFileOut
-from app.services import file_service
+from app.services import file_service, notice_service
 from app.services.log_service import log_action
-from app.services import notice_service
 
 router = APIRouter(prefix="/api", tags=["files"])
 

@@ -16,7 +16,6 @@ MIN_TEXT_LENGTH = 30
 class PdfExtractError(Exception):
     """提取失败时抛出的「专属错误」，方便上层用 except 精确接住。"""
 
-    pass
 
 
 def extract_text(data: bytes) -> str:

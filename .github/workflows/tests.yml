@@ -1,5 +1,11 @@
-# 自动化测试：每次 push / PR 到 main 时，用独立测试库跑全部 7 套断言
-# 本地等效命令：cd ats/backend && python scripts/run_all_tests.py
+# 自动化测试：每次 push / PR 到 main 时
+#   1. ruff 静态检查（后端）
+#   2. 前端 build（语法 / 打包错误）
+#   3. 用独立测试库跑全部 8 套断言
+# 本地等效命令：
+#   cd ats/backend && python -m ruff check .
+#   cd ats/frontend && npm run build
+#   cd ats/backend && python scripts/run_all_tests.py
 name: tests
 
 on:
@@ -35,11 +41,28 @@ jobs:
           cache: pip
           cache-dependency-path: ats/backend/requirements.txt
 
-      - name: 安装依赖
-        working-directory: ats/backend
-        run: pip install -r requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ats/frontend/package-lock.json
 
-      # run_all_tests.py 会自建 ats_test 库、起独立测试服务（8001）、依次跑 7 套脚本
+      - name: 安装后端依赖 + ruff
+        working-directory: ats/backend
+        run: |
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: ruff 静态检查
+        working-directory: ats/backend
+        run: ruff check .
+
+      - name: 安装前端依赖并 build
+        working-directory: ats/frontend
+        run: |
+          npm ci
+          npm run build
+
       - name: 跑全量测试
         working-directory: ats/backend
         env:

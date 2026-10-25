@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import httpx  # noqa: E402
-import pymysql  # noqa: E402
+import httpx
+import pymysql
 
 BASE = os.getenv("ATS_BASE", "http://127.0.0.1:8001")
 DB_PW = os.getenv("ATS_DB_PASSWORD", "your-password")
@@ -135,7 +135,6 @@ def main() -> int:
             data={"category": "certificate"},
         )
         check("HR 上传证书", r.status_code == 201, r.text[:150])
-        f_hr = r.json()
         r = c.delete(f"/api/files/{f2['id']}", headers=H)
         check("HR 删除文件 204", r.status_code == 204, f"{r.status_code}")
 
@@ -292,7 +291,7 @@ def main() -> int:
                 cur.execute(f"SELECT COUNT(*) FROM `{t}`")
                 print(f"  cleanup {t}: {cur.fetchone()[0]} rows left")
             conn.close()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"清理失败：{e}")
         c.close()
 

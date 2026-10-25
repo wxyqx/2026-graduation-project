@@ -5,6 +5,7 @@
 为什么单独一个文件？因为读写设置的地方不止一处（AI 录入要读提示词、设置接口要读写提示词），
 集中在这里，逻辑不会两处写得不一样。
 """
+import json
 from datetime import datetime
 
 from sqlalchemy import select
@@ -60,8 +61,6 @@ def set_setting(db: Session, user_id: int, key: str, value: str | None) -> None:
 
 
 # ---------- 阶段文案的手动改写（存成一条 JSON 设置）----------
-
-import json
 
 STAGE_NOTES_KEY = "stage_notes"
 

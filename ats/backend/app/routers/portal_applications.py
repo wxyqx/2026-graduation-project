@@ -26,7 +26,13 @@ from app.core.database import get_db
 from app.core.deps import get_current_candidate
 from app.models import Application, Position, User
 from app.schemas.portal import PortalApplyIn
-from app.services import file_service, form_service, portal_apply, portal_views, ratelimit
+from app.services import (
+    file_service,
+    form_service,
+    portal_apply,
+    portal_views,
+    ratelimit,
+)
 from app.services import state_machine as sm
 from app.services.log_service import log_action
 

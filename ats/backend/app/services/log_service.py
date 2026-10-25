@@ -39,6 +39,6 @@ def log_action(
             create_time=datetime.now(),
         )
         db.add(entry)
-    except Exception:  # noqa: BLE001
+    except Exception:
         # 日志是辅助功能，绝不能因为它让主流程报错
         pass

@@ -6,7 +6,7 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,9 +15,9 @@ from app.core.deps import get_current_admin
 from app.models import User
 from app.schemas.auth import LoginIn, TokenOut, UserOut
 from app.schemas.tech import TechPasswordIn
+from app.services import avatar_service
 from app.services.log_service import log_action
 from app.services.security import create_access_token, hash_password, verify_password
-from app.services import avatar_service
 
 router = APIRouter(prefix="/api/tech/auth", tags=["tech-auth"])
 

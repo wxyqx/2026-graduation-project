@@ -114,7 +114,6 @@ def resolve_range(
     结束时间是「包含当天」的，所以用当天 23:59:59.999999。
     """
     now = now or datetime.now()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     if range_key == "week":

@@ -22,7 +22,6 @@ REQUEST_TIMEOUT = 90.0  # 最多等 AI 90 秒，再不回就放弃（AI 有时�
 class LlmError(Exception):
     """跟 AI 说话过程中的任何问题（网络不通、它回了乱码…）都抛这个错。"""
 
-    pass
 
 
 def completions_url(base_url: str) -> str:

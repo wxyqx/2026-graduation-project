@@ -14,7 +14,7 @@
    role 写进 token 只是方便排查；真正鉴权时以数据库里的 User.role 为准，
    这样管理员改了某个人的角色，旧 token 也立刻按新角色受限。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -45,7 +45,7 @@ def create_access_token(user_id: int, role: str | None = None) -> str:
     exp（expire） ：过期时间——候选人 30 天，其余 7 天（都在 .env 里配）
     """
     days = settings.portal_token_expire_days if role == "candidate" else settings.token_expire_days
-    expire = datetime.now(timezone.utc) + timedelta(days=days)
+    expire = datetime.now(UTC) + timedelta(days=days)
     payload = {"sub": str(user_id), "exp": expire}
     if role:
         payload["role"] = role

@@ -24,11 +24,11 @@ from pathlib import Path
 # 让脚本能 import app.*（把 backend 目录加进搜索路径）
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select
 
-from app.core.database import SessionLocal  # noqa: E402
-from app.models import User  # noqa: E402
-from app.services.security import hash_password  # noqa: E402
+from app.core.database import SessionLocal
+from app.models import User
+from app.services.security import hash_password
 
 ROLES = ("admin", "hr")
 
@@ -44,7 +44,7 @@ def list_users(db) -> None:
         name = u.username or "(手机号账号)"
         state = "启用" if getattr(u, "is_active", 1) else "停用"
         last = u.last_login_time.strftime("%Y-%m-%d %H:%M") if u.last_login_time else "-"
-        print(f"{u.id:>4}  {name:<20} {u.role:<10} {state:<6} {str(u.candidate_id or '-'):<8} {last}")
+        print(f"{u.id:>4}  {name:<20} {u.role:<10} {state:<6} {u.candidate_id or '-'!s:<8} {last}")
 
 
 def main() -> int:

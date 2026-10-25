@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import httpx  # noqa: E402
-import pymysql  # noqa: E402
+import httpx
+import pymysql
 
 BASE = os.getenv("ATS_BASE", "http://127.0.0.1:8001")
 DB_PW = os.getenv("ATS_DB_PASSWORD", "your-password")
@@ -153,7 +153,7 @@ def main() -> int:
             cur.execute("SELECT COUNT(*) FROM User")
             print(f"  cleanup User: {cur.fetchone()[0]} rows left")
             conn.close()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"清理失败：{e}")
         c.close()
 

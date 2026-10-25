@@ -7,7 +7,6 @@
   DELETE /api/candidates/{id}      删除（级联删除其名下投递，不可恢复）
 """
 from datetime import datetime
-
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status

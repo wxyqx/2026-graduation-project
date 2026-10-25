@@ -1,0 +1,12 @@
+# Ruff 配置：客观、低误报的基础检查。
+# 注意：用 ruff.toml 而非 pyproject.toml 的 [tool.ruff]（后者在本机 0.17.2 下未被正确解析）。
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[lint.per-file-ignores]
+# scripts/ 里先 sys.path 再 import 的模式是刻意的；一行多语句的小工具写法也保留
+"scripts/**" = ["E402", "E702"]
+"app/models/__init__.py" = ["E402"]

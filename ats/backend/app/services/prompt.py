@@ -152,7 +152,7 @@ _REASON_KEYS = ("reason", "理由", "原因", "说明", "comment", "备注", "�
 
 def _first_key(obj: dict, keys: tuple[str, ...]):
     """按顺序找第一个存在的键，返回 (键名, 值)；都没有返回 (None, None)。键名比对忽略大小写。"""
-    lower = {str(k).lower(): k for k in obj.keys()}
+    lower = {str(k).lower(): k for k in obj}
     for k in keys:
         if k in obj:
             return k, obj[k]

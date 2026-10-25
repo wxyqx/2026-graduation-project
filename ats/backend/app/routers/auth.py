@@ -12,7 +12,7 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,9 +21,9 @@ from app.core.database import get_db
 from app.core.deps import get_current_hr
 from app.models import User
 from app.schemas.auth import LoginIn, ProfileUpdateIn, RegisterIn, TokenOut, UserOut
-from app.services.security import create_access_token, hash_password, verify_password
-from app.services.phone import is_valid_phone, normalize_phone
 from app.services import avatar_service
+from app.services.phone import is_valid_phone, normalize_phone
+from app.services.security import create_access_token, hash_password, verify_password
 
 # prefix：这个文件里所有网址都以 /api/auth 开头；tags：在 /docs 文档页里归到「auth」这一组
 router = APIRouter(prefix="/api/auth", tags=["auth"])

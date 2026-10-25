@@ -29,12 +29,12 @@ if os.getenv("ATS_DB_NAME"):
         f"@127.0.0.1:3306/{os.environ['ATS_DB_NAME']}?charset=utf8mb4"
     )
 
-import httpx  # noqa: E402
-from sqlalchemy import select  # noqa: E402
+import httpx
+from sqlalchemy import select
 
-from app.core.database import SessionLocal  # noqa: E402
-from app.models import Candidate, User  # noqa: E402
-from app.services import prompt as prompt_svc  # noqa: E402
+from app.core.database import SessionLocal
+from app.models import Candidate, User
+from app.services import prompt as prompt_svc
 
 BASE = os.getenv("ATS_BASE", "http://127.0.0.1:8001")
 PASSED = 0
@@ -209,7 +209,7 @@ def main() -> int:
                 if fresh is not None:
                     db.delete(fresh)
                     db.commit()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             db.rollback()
             print(f"清理失败：{e}")
         db.close()

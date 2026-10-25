@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import get_current_admin
 from app.models import Application, Candidate, Position, StageOwner, User
-from app.services.state_machine import STAGES, STAGE_LABELS
 from app.services.log_service import log_action
+from app.services.state_machine import STAGE_LABELS, STAGES
 
 router = APIRouter(prefix="/api/tech/candidate-owners", tags=["tech-candidate-owners"])
 

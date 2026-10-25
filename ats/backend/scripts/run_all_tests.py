@@ -21,8 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pymysql  # noqa: E402
-import httpx  # noqa: E402
+import httpx
+import pymysql
 
 BACKEND = Path(__file__).resolve().parents[1]
 SQL_FILE = BACKEND.parent.parent / "step" / "StepO" / "crebas.sql"

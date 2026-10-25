@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -21,12 +22,10 @@ from app.core.database import get_db
 from app.core.deps import get_current_hr
 from app.models import Application, Candidate, CandidateNotice, Position, User
 from app.schemas.application import AdvanceIn, ApplicationCreate, RevertIn, StageNoteIn
-from pydantic import BaseModel, Field
-
+from app.services import notice_service, ownership
 from app.services import positions as positions_svc
-from app.services import notice_service
+from app.services import state_machine as sm
 from app.services.log_service import log_action
-from app.services import ownership, state_machine as sm
 from app.services.views import application_detail, application_summary
 
 router = APIRouter(prefix="/api/applications", tags=["applications"], dependencies=[Depends(get_current_hr)])

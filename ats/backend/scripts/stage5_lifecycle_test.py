@@ -28,9 +28,16 @@ if os.getenv("ATS_DB_NAME"):
         f"@127.0.0.1:3306/{os.environ['ATS_DB_NAME']}?charset=utf8mb4"
     )
 
-from app.core.database import SessionLocal  # noqa: E402
-from app.models import Application, Candidate, CandidateNotice, Position, StageOwner, User  # noqa: E402
-from app.services.security import create_access_token, hash_password  # noqa: E402
+from app.core.database import SessionLocal
+from app.models import (
+    Application,
+    Candidate,
+    CandidateNotice,
+    Position,
+    StageOwner,
+    User,
+)
+from app.services.security import create_access_token, hash_password
 
 BASE = os.getenv("ATS_BASE", "http://127.0.0.1:8001")
 DB_NAME = os.getenv("ATS_DB_NAME", "ats")

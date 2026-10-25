@@ -54,7 +54,7 @@ async def screen_resume(db: Session, position: Position, data: bytes) -> dict:
                 prompt.build_user_prompt(block, text, fixed_position=position),
             )
             parsed = prompt.parse_answer(content, {position.id: position}, position)
-        except Exception as e:  # noqa: BLE001 - AI 网络/密钥/格式问题都降级
+        except Exception as e:
             last_err = str(e)
             continue
         if parsed["result"] in ("pass", "fail"):

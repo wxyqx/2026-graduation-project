@@ -12,7 +12,7 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -27,11 +27,10 @@ from app.schemas.portal_auth import (
     PortalTokenOut,
     PortalUserOut,
 )
-from app.services import accounts, notice_service, ratelimit
+from app.services import accounts, avatar_service, notice_service, ratelimit
 from app.services.log_service import log_action
 from app.services.phone import is_valid_phone, normalize_phone
 from app.services.security import create_access_token, hash_password, verify_password
-from app.services import avatar_service
 
 router = APIRouter(prefix="/api/portal/auth", tags=["portal-auth"])
 

@@ -27,8 +27,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AiApiConfig, Application, Candidate, Position
-from app.services import accounts
-from app.services import llm, prompt as prompt_svc
+from app.services import accounts, llm
+from app.services import prompt as prompt_svc
 from app.services import state_machine as sm
 from app.services.pdf import PdfExtractError, extract_text
 
