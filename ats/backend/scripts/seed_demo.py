@@ -27,7 +27,11 @@ import httpx  # noqa: E402
 import pymysql  # noqa: E402
 
 BASE = "http://127.0.0.1:8001"
-DB_PW = "ats2026"
+# 数据库密码：读 .env 的 DATABASE_URL，或环境变量 ATS_DB_PASSWORD
+import re as _re
+_env = Path(__file__).resolve().parents[1] / ".env"
+_m = _re.search(r"://[^:]+:([^@]+)@", _env.read_text(encoding="utf-8")) if _env.exists() else None
+DB_PW = os.getenv("ATS_DB_PASSWORD") or (_m.group(1) if _m else "")
 HR_USERNAME = "hr_demo"
 HR_PASSWORD = "admin123"
 PHONE = "13800138000"

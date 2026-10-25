@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # 支持独立测试库：设了 ATS_DB_NAME 就把 DATABASE_URL 指到测试库（须在 import app.* 之前）
 if os.getenv("ATS_DB_NAME"):
     os.environ["DATABASE_URL"] = (
-        f"mysql+pymysql://root:{os.getenv('ATS_DB_PASSWORD', 'ats2026')}"
+        f"mysql+pymysql://root:{os.getenv('ATS_DB_PASSWORD', '')}"
         f"@127.0.0.1:3306/{os.environ['ATS_DB_NAME']}?charset=utf8mb4"
     )
 

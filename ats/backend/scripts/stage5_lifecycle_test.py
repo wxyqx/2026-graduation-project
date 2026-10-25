@@ -24,7 +24,7 @@ from sqlalchemy import select
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if os.getenv("ATS_DB_NAME"):
     os.environ["DATABASE_URL"] = (
-        f"mysql+pymysql://root:{os.getenv('ATS_DB_PASSWORD', 'ats2026')}"
+        f"mysql+pymysql://root:{os.getenv('ATS_DB_PASSWORD', '')}"
         f"@127.0.0.1:3306/{os.environ['ATS_DB_NAME']}?charset=utf8mb4"
     )
 
@@ -34,7 +34,14 @@ from app.services.security import create_access_token, hash_password  # noqa: E4
 
 BASE = os.getenv("ATS_BASE", "http://127.0.0.1:8001")
 DB_NAME = os.getenv("ATS_DB_NAME", "ats")
-DB_PW = os.getenv("ATS_DB_PASSWORD", "ats2026")
+_env_pw = None
+_env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+if os.path.exists(_env_file):
+    import re as _re
+    _m = _re.search(r"://[^:]+:([^@]+)@", open(_env_file, encoding="utf-8").read())
+    if _m:
+        _env_pw = _m.group(1)
+DB_PW = os.getenv("ATS_DB_PASSWORD") or _env_pw or ""
 
 STAMP = str(int(time.time()))
 P_A, P_B, P_C = (f"1399999{STAMP[-3:]}{i}" for i in (1, 2, 3))

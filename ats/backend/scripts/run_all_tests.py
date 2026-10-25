@@ -51,7 +51,9 @@ def db_password() -> str:
         m = re.search(r"://[^:]+:([^@]+)@", env_file.read_text(encoding="utf-8"))
         if m:
             return m.group(1)
-    return "ats2026"
+    raise RuntimeError(
+        "拿不到数据库密码：请设置环境变量 ATS_DB_PASSWORD，或确认 backend/.env 里有 DATABASE_URL"
+    )
 
 
 def rebuild_test_db(pw: str) -> None:
