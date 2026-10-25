@@ -74,7 +74,7 @@ def main() -> int:
         # 导入：与真实恢复完全相同的工具链（mysql 客户端读 dump 文件）
         with open(dump, "rb") as f:
             r = subprocess.run(
-                [mysql, f"--user=root", f"--password={pw}", "--default-character-set=utf8mb4", DRILL_DB],
+                [mysql, "--user=root", f"--password={pw}", "--default-character-set=utf8mb4", DRILL_DB],
                 stdin=f, stderr=subprocess.PIPE,
             )
         if r.returncode != 0:
