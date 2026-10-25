@@ -28,7 +28,7 @@ import smtpd  # noqa: E402  # Python 3.11 仍有（3.12 移除）；测试库环
 from sqlalchemy import select  # noqa: E402
 
 from app.core.database import SessionLocal  # noqa: E402
-from app.models import Application, Candidate, CandidateNotice, Position, User
+from app.models import Application, Candidate, Position, User
 from app.services.security import create_access_token, hash_password  # noqa: E402
 
 BASE = os.getenv("ATS_BASE", "http://127.0.0.1:8001")
