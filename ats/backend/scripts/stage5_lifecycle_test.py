@@ -90,6 +90,7 @@ def cleanup():
                 cur.execute("DELETE FROM position WHERE ID=%s", (pid,))
             for uname in (f"lc_hr_{STAMP}", f"lc_hrb_{STAMP}"):
                 cur.execute("DELETE FROM user WHERE username=%s", (uname,))
+            cur.execute("DELETE FROM app_setting WHERE setting_key='stage_notice'")
         conn.commit()
     finally:
         conn.close()
@@ -110,6 +111,7 @@ def main() -> int:
     try:
         # ---- 准备：HR 甲/乙、候选人（甲建档）、岗位、投递 ----
         hr_a = make_hr(db, f"lc_hr_{STAMP}", P_A)
+        HR_A_NAME = hr_a.real_name
         hr_b = make_hr(db, f"lc_hrb_{STAMP}", P_B)
         from app.services.accounts import ensure_candidate_account
 
@@ -144,6 +146,12 @@ def main() -> int:
             finally:
                 s.close()
 
+        # 先把淘汰模板存成带 {负责人} 的版本（默认模板没这个占位符）
+        r = c.put("/api/settings/stage-notice", headers=TA, json={
+            "eliminated": {"enabled": True, "title": "结果通知",
+                           "body": "很遗憾未能通过「{岗位}」的{关卡}，如需咨询请联系{负责人}。"}})
+        check(r.status_code == 200, "保存带 {负责人} 的淘汰模板", r.text[:120])
+
         # ---- 1. 淘汰确认 ----
         r = c.post(f"/api/applications/{APP}/advance", headers=TA,
                    json={"fromStage": "test", "result": "fail"})
@@ -158,6 +166,7 @@ def main() -> int:
             CandidateNotice.application_id == APP, CandidateNotice.stage == "eliminated"))
         check(n is not None and n.send_time is not None, "淘汰通知已生成并发送")
         check("生命周期测试岗" in (n.body or ""), "占位符已渲染（岗位）")
+        check(HR_A_NAME in (n.body or ""), "{负责人}=本关负责人（淘汰=评估人）")
         # 无手机号的候选人：真实走一遍淘汰，不应生成通知
         c2 = Candidate(name=f"无号{STAMP}", phone=None, owner_id=hr_a.id, create_time=datetime.now())
         s.add(c2)

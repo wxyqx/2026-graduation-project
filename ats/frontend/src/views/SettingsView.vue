@@ -25,6 +25,7 @@ const NOTICE_PLACEHOLDERS = [
   { label: '候选人姓名', value: '{候选人}', hint: '自动替换为该候选人的姓名' },
   { label: '应聘岗位', value: '{岗位}', hint: '自动替换为投递的岗位名' },
   { label: '所在关卡', value: '{关卡}', hint: '自动替换为通过/被淘汰的关卡名' },
+  { label: '环节负责人', value: '{负责人}', hint: '通过=下一关负责人（接下来由谁负责），淘汰=本关负责人（评估人）；未指派时为候选人负责人' },
 ]
 
 // 声明时就初始化四关，避免接口返回前模板读到 undefined 报错
@@ -47,6 +48,7 @@ function renderSample(text, st) {
     候选人: '张三',
     岗位: '示例岗位',
     关卡: st === 'eliminated' ? '专业面' : stageLabel[st],
+    负责人: st === 'eliminated' ? '李评估' : '王面试官',
   }
   for (const [k, v] of Object.entries(values)) text = (text || '').replaceAll(`{${k}}`, v)
   return text
@@ -152,7 +154,7 @@ onMounted(() => {
         候选人通过笔试 / 专业面 / HR 面 / 终面时，按这里的模板给他发一条通知，候选人下次登录会弹窗展示；
         被淘汰时按「淘汰」模板立即发送（候选人两天保留期内登录可见，超期登录通道关闭，拦截信息也用此模板）；
         关掉开关则不发。正文里点「候选人姓名 / 应聘岗位 / 所在关卡」按钮即可插入占位符，
-        发送时自动替换成每位候选人的真实信息（<code>{候选人}</code> <code>{岗位}</code> <code>{关卡}</code>）。
+        发送时自动替换成每位候选人的真实信息（<code>{候选人}</code> <code>{岗位}</code> <code>{关卡}</code> <code>{负责人}</code>——通过=下一关负责人、淘汰=本关负责人）。
       </p>
       <el-tabs v-model="noticeTab" class="notice-tabs">
         <el-tab-pane v-for="st in NOTICE_STAGES" :key="st" :name="st">
@@ -211,7 +213,7 @@ onMounted(() => {
       destroy-on-close
     >
       <p class="muted" style="margin-top: 0">
-        占位符已用示例值渲染：{候选人}=张三，{岗位}=示例岗位，{关卡}={{ previewStage === 'eliminated' ? '专业面' : stageLabel[previewStage] }}。
+        占位符已用示例值渲染：{候选人}=张三，{岗位}=示例岗位，{关卡}={{ previewStage === 'eliminated' ? '专业面' : stageLabel[previewStage] }}，{负责人}={{ previewStage === 'eliminated' ? '李评估（本关负责人）' : '王面试官（下一关负责人）' }}。
       </p>
       <div class="candidate-notice-mock">
         <div class="mock-item mock-unread">

@@ -13,7 +13,7 @@ import nh3
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Application, Candidate, CandidateFile, CandidateNotice, Position
+from app.models import Application, Candidate, CandidateFile, CandidateNotice, Position, StageOwner, User
 from app.services import settings as settings_svc
 from app.services.state_machine import STAGE_FIELDS, STAGE_LABELS, STAGES
 
@@ -40,7 +40,7 @@ def send_stage_notice(db: Session, app: Application, stage: str) -> None:
     )
     if exists is not None:
         return
-    values = _template_values(db, app, stage)
+    values = _template_values(db, app, stage, owner_stage=_next_stage(stage))
     def render(text: str) -> str:
         return _render(text, values)
 
@@ -58,8 +58,38 @@ def send_stage_notice(db: Session, app: Application, stage: str) -> None:
     db.flush()
 
 
-def _template_values(db: Session, app: Application, stage: str) -> dict[str, str]:
-    """模板占位符取值：{候选人} {岗位} {关卡}。"""
+def _next_stage(stage: str) -> str | None:
+    """7 关里的下一关；final / 非流程关（onboard）没有下一关。"""
+    if stage in STAGES:
+        i = STAGES.index(stage)
+        return STAGES[i + 1] if i + 1 < len(STAGES) else None
+    return None
+
+
+def _resolve_owner_name(db: Session, app: Application, owner_stage: str | None) -> str:
+    """占位符 {负责人} 的取值链：指定关卡的负责人 → 候选人负责人 → 通用称呼。
+
+    通过通知传「下一关」（告知候选人接下来由谁负责）；淘汰通知传「本关」（评估人）；
+    final 通过 / 入职没有下一关 → 自然落到候选人负责人。
+    """
+    if owner_stage:
+        row = db.scalar(
+            select(StageOwner).where(StageOwner.application_id == app.id, StageOwner.stage == owner_stage)
+        )
+        if row and row.user_id:
+            u = db.get(User, row.user_id)
+            if u and (u.real_name or u.username):
+                return u.real_name or u.username
+    cand = db.get(Candidate, app.can_id)
+    if cand and cand.owner_id:
+        u = db.get(User, cand.owner_id)
+        if u and (u.real_name or u.username):
+            return u.real_name or u.username
+    return "招聘负责人"
+
+
+def _template_values(db: Session, app: Application, stage: str, owner_stage: str | None = None) -> dict[str, str]:
+    """模板占位符取值：{候选人} {岗位} {关卡} {负责人}。"""
     cand = db.get(Candidate, app.can_id)
     pos = db.get(Position, app.pos_id) if app.pos_id else None
     return {
@@ -67,6 +97,7 @@ def _template_values(db: Session, app: Application, stage: str) -> dict[str, str
         "岗位": (pos.position_name if pos else None) or "在招岗位",
         # onboard（入职通知）不在 7 关流程里，关卡名直接叫「入职」
         "关卡": "入职" if stage == "onboard" else STAGE_LABELS.get(stage, stage),
+        "负责人": _resolve_owner_name(db, app, owner_stage),
     }
 
 
@@ -99,7 +130,7 @@ def send_eliminate_notice(db: Session, app: Application, stage: str) -> None:
     )
     if exists is not None:
         return
-    values = _template_values(db, app, stage)
+    values = _template_values(db, app, stage, owner_stage=stage)  # 淘汰：本关负责人
     notice = CandidateNotice(
         candidate_id=app.can_id,
         application_id=app.id,
@@ -142,7 +173,7 @@ def latest_elimination(db: Session, candidate_id: int) -> tuple[Application, str
 def eliminate_notice_text(db: Session, app: Application, stage: str) -> str:
     """把淘汰通知模板渲染成纯文字（去掉富文本标签），给登录拦截信息用。"""
     cfg = settings_svc.get_stage_notice(db).get("eliminated") or {}
-    values = _template_values(db, app, stage)
+    values = _template_values(db, app, stage, owner_stage=stage)
     title = _render(cfg.get("title") or "", values)
     body = _render(cfg.get("body") or "", values)
     text = _TAG_RE.sub("", f"{title}　{body}" if body else title)

@@ -133,6 +133,24 @@ def main() -> int:
         # （对比组在后面：给这个候选人补 email 再发一次，能收到 → 证明判定依据是 email）
 
         # ---- 3. HR 发通知 → 异步邮件（收件人 / 标题 / 正文） ----
+        # 先把 phone 模板存成带 {负责人} 的版本（默认模板没这个占位符，替换无从发生）
+        r = c.put("/api/settings/stage-notice", headers=H, json={
+            "phone": {"enabled": True, "title": "通过通知",
+                      "body": "恭喜通过电话沟通，下一关由{负责人}负责，请留意安排。"}})
+        check(r.status_code == 200, "保存带 {负责人} 的 phone 模板", r.text[:120])
+
+        # 预指派 test 关负责人 = 乙：验证 {负责人} 取「下一关负责人」且预指派优先于候选人负责人
+        s2 = SessionLocal()
+        hr_b = User(username=f"lc6_hrb_{STAMP}", phone=f"1399999{STAMP[-3:]}5",
+                    real_name="下一关负责人乙", role="hr", password_hash=hash_password("x"),
+                    is_active=1, create_time=datetime.now())
+        s2.add(hr_b)
+        s2.commit()
+        HRB_ID = hr_b.id
+        s2.close()
+        c.put(f"/api/tech/candidate-owners/stage-owners/{APP}", headers=TM,
+              json={"owners": {"test": HRB_ID}})
+
         r = c.get(f"/api/applications/{APP}/notices", headers=H)
         # phone 关 pass 会自动生成草稿；直接生成一条草稿并发送
         r = c.post(f"/api/applications/{APP}/advance", headers=H,
@@ -140,6 +158,9 @@ def main() -> int:
         check(r.status_code == 200, "推进 phone 关（生成通过通知草稿）", r.text[:120])
         r = c.get(f"/api/applications/{APP}/notices", headers=H).json()
         draft = next(x for x in r if x["stage"] == "phone" and x["send_time"] is None)
+        check("下一关负责人乙" in (draft["body"] or ""), "{负责人}=下一关负责人（预指派优先于候选人负责人）",
+              str(draft.get("body"))[:120])
+        check("邮件测试甲" not in (draft["body"] or ""), "未回退到候选人负责人（预指派生效）")
         r = c.post(f"/api/applications/{APP}/notices/{draft['id']}/send", headers=H)
         check(r.status_code == 200, "HR 发送通知", r.text[:120])
         check(wait_mail(1), "异步邮件已送达 mock SMTP")
@@ -275,8 +296,9 @@ def main() -> int:
                     cur.execute("DELETE FROM user WHERE candidate_id=%s", (cid,))
                     cur.execute("DELETE FROM candidate WHERE ID=%s", (cid,))
                 cur.execute("DELETE FROM position WHERE position_name LIKE %s", (f"邮件测试岗{STAMP}",))
-                cur.execute("DELETE FROM user WHERE username LIKE %s", (f"lc6_hr_{STAMP}",))
+                cur.execute("DELETE FROM user WHERE username IN (%s, %s)", (f"lc6_hr_{STAMP}", f"lc6_hrb_{STAMP}"))
                 cur.execute("DELETE FROM app_setting WHERE setting_key='email_smtp'")
+                cur.execute("DELETE FROM app_setting WHERE setting_key='stage_notice'")
             conn.commit()
         finally:
             conn.close()
