@@ -284,7 +284,7 @@ def main() -> int:
             for cid, enabled in prev_configs:
                 cur.execute("UPDATE ai_api_config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
             conn.commit()
-            for t in ("Candidate_File", "Form_Submission", "Candidate", "Application", "Form_Template", "AI_API_Config", "Position"):
+            for t in ("candidate_file", "form_submission", "candidate", "application", "form_template", "ai_api_config", "position"):
                 cur.execute(f"SELECT COUNT(*) FROM `{t}`")
                 print(f"  cleanup {t}: {cur.fetchone()[0]} rows left")
             conn.close()

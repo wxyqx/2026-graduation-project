@@ -553,18 +553,18 @@ def cleanup():
     def dele(table, ids):
         if ids:
             cur.execute(f"DELETE FROM `{table}` WHERE ID IN ({','.join(map(str, ids))})")
-    dele("Application", created["applications"])
+    dele("application", created["applications"])
     if created["configs"]:
         cur.execute(f"DELETE FROM ai_api_config WHERE ID IN ({','.join(map(str, created['configs']))})")
     for cid, enabled in created["config_prev"]:
         cur.execute("UPDATE ai_api_config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
     if created["users"]:
         cur.execute(f"DELETE FROM app_setting WHERE User_ID IN ({','.join(map(str, created['users']))})")
-    dele("Candidate", created["candidates"])
-    dele("Position", created["positions"])
-    dele("User", created["users"])
+    dele("candidate", created["candidates"])
+    dele("position", created["positions"])
+    dele("user", created["users"])
     conn.commit()
-    for t in ("Application", "Candidate", "Position", "AI_API_Config", "User"):
+    for t in ("application", "candidate", "position", "ai_api_config", "user"):
         cur.execute(f"SELECT COUNT(*) FROM `{t}`")
         print(f"  cleanup {t}: {cur.fetchone()[0]} rows left")
     conn.close()

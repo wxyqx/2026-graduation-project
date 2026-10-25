@@ -141,7 +141,7 @@ def main():
         cur.execute(f"DELETE FROM position WHERE ID IN ({','.join(map(str, ids['positions'])) or 0})")
         cur.execute(f"DELETE FROM user WHERE ID IN ({','.join(map(str, ids['users'])) or 0})")
         conn.commit()
-        for t in ("Application", "Candidate", "Position", "AI_API_Config", "User"):
+        for t in ("application", "candidate", "position", "ai_api_config", "user"):
             cur.execute(f"SELECT COUNT(*) FROM `{t}`"); print(f"  cleanup {t}: {cur.fetchone()[0]} rows left")
         conn.close()
         srv.shutdown()

@@ -287,7 +287,7 @@ def main() -> int:
             cur.execute(f"DELETE FROM form_template WHERE ID IN ({tpl_ids})")
             cur.execute(f"DELETE FROM position WHERE ID IN ({pos_ids})")
             conn.commit()
-            for t in ("Candidate_File", "Form_Answer", "Form_Submission", "Form_Template", "Candidate", "Application", "Position"):
+            for t in ("candidate_file", "form_answer", "form_submission", "form_template", "candidate", "application", "position"):
                 cur.execute(f"SELECT COUNT(*) FROM `{t}`")
                 print(f"  cleanup {t}: {cur.fetchone()[0]} rows left")
             conn.close()
