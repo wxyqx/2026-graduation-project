@@ -10,3 +10,5 @@ select = ["E4", "E7", "E9", "F", "I"]
 # scripts/ 里先 sys.path 再 import 的模式是刻意的；一行多语句的小工具写法也保留
 "scripts/**" = ["E402", "E702"]
 "app/models/__init__.py" = ["E402"]
+"alembic/env.py" = ["E402"]
+"alembic/versions/**" = ["E402"]
