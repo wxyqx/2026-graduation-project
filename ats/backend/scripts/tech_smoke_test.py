@@ -58,7 +58,7 @@ def main() -> int:
         check("技术端 /me", c.get("/api/tech/auth/me", headers=T).status_code == 200)
 
         hr_name = f"tech_hr_{tag}"
-        r = c.post("/api/auth/register", json={"username": hr_name, "password": "secret123"})
+        r = c.post("/api/auth/register", json={"username": hr_name, "password": "secret123", "real_name": "测试HR", "phone": "139" + tag[-8:]})
         check("注册临时 HR", r.status_code == 201, r.text[:150])
         H = {"Authorization": f"Bearer {r.json()['token']}"}
         hr_id = r.json()["user"]["id"]
@@ -74,13 +74,13 @@ def main() -> int:
 
         # ---------- 3. 账号 ----------
         r = c.get("/api/tech/accounts", headers=T)
-        check("账号列表 >= 3", r.status_code == 200 and len(r.json()) >= 3, str(len(r.json())))
-        r = c.post("/api/tech/accounts", headers=T, json={"role": "hr", "username": f"new_hr_{tag}", "password": "secret123"})
+        check("账号列表 >= 2（测试库只有 tech + 临时 HR）", r.status_code == 200 and len(r.json()) >= 2, str(len(r.json())))
+        r = c.post("/api/tech/accounts", headers=T, json={"role": "hr", "username": f"new_hr_{tag}", "password": "secret123", "real_name": "测试HR", "phone": "138" + tag[-8:]})
         check("创建 HR 账号", r.status_code == 201, r.text[:150])
         new_id = r.json()["id"]
         r = c.post("/api/auth/login", json={"username": f"new_hr_{tag}", "password": "secret123"})
         check("新 HR 可登录 HR 端", r.status_code == 200)
-        check("重复用户名 409", c.post("/api/tech/accounts", headers=T, json={"role": "hr", "username": f"new_hr_{tag}"}).status_code == 409)
+        check("重复用户名 409", c.post("/api/tech/accounts", headers=T, json={"role": "hr", "username": f"new_hr_{tag}", "phone": "138" + tag[-8:], "real_name": "测试HR"}).status_code == 409)
         r = c.put(f"/api/tech/accounts/{new_id}/status", headers=T, json={"is_active": False})
         check("停用账号", r.status_code == 200 and r.json()["is_active"] is False)
         check("停用后 HR 登录 403", c.post("/api/auth/login", json={"username": f"new_hr_{tag}", "password": "secret123"}).status_code == 403)
@@ -143,7 +143,7 @@ def main() -> int:
         except Exception:
             pass
         try:
-            conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database="ats")
+            conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database=os.getenv("ATS_DB_NAME", "ats"))
             cur = conn.cursor()
             ids = [x for x in (hr_id, new_id) if x]
             if ids:

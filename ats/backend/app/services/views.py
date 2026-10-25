@@ -21,6 +21,9 @@ def application_summary(app: Application) -> dict:
         "pos_id": app.pos_id,
         # 顺着 relationship 拿名字。if app.candidate 是防御：万一关联对象取不到，别让整个接口崩掉
         "candidate_name": app.candidate.name if app.candidate else None,
+        # 候选人负责人（HR）：负责人能编辑全部关卡；其他 HR 只能编辑自己负责的关卡
+        "candidate_owner_id": app.candidate.owner_id if app.candidate else None,
+        "candidate_owner_name": _hr_display(app.candidate.owner) if app.candidate else None,
         "position_name": app.position.position_name if app.position else None,
         "current_stage": app.current_stage,
         "current_stage_label": STAGE_LABELS.get(app.current_stage or "", app.current_stage),  # 中文名，前端直接显示
@@ -33,8 +36,30 @@ def application_summary(app: Application) -> dict:
     }
 
 
-def application_detail(app: Application) -> dict:
-    """完整版：先拿简版，再补上候选人、岗位、时间线。"""
+def _hr_display(u) -> str | None:
+    """HR 显示名：实名优先。"""
+    return None if u is None else (u.real_name or u.username)
+
+
+def _stage_owners(db, app: Application) -> dict[str, dict]:
+    """这投递各关的负责人：{stage: {user_id, name}}，没有负责人的关不在结果里。"""
+    from sqlalchemy import select
+
+    from app.models import StageOwner, User
+
+    rows = db.execute(
+        select(StageOwner.stage, User.id, User.real_name, User.username)
+        .join(User, StageOwner.user_id == User.id, isouter=True)
+        .where(StageOwner.application_id == app.id)
+    ).all()
+    return {
+        stage: {"user_id": uid, "name": (real or username) if uid else None}
+        for stage, uid, real, username in rows
+    }
+
+
+def application_detail(app: Application, db=None) -> dict:
+    """完整版：先拿简版，再补上候选人、岗位、时间线（db 传入时附带各关负责人）。"""
     data = application_summary(app)
     data["candidate"] = (
         {
@@ -59,4 +84,6 @@ def application_detail(app: Application) -> dict:
         else None
     )
     data["stages"] = stage_timeline(app)  # 7 关每关的成绩和时间，详情页画时间线
+    if db is not None:
+        data["stage_owners"] = _stage_owners(db, app)  # 各关负责人（编辑权限用）
     return data

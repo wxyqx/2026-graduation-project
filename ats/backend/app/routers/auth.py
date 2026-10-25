@@ -22,6 +22,7 @@ from app.core.deps import get_current_hr
 from app.models import User
 from app.schemas.auth import LoginIn, ProfileUpdateIn, RegisterIn, TokenOut, UserOut
 from app.services.security import create_access_token, hash_password, verify_password
+from app.services.phone import is_valid_phone, normalize_phone
 from app.services import avatar_service
 
 # prefix：这个文件里所有网址都以 /api/auth 开头；tags：在 /docs 文档页里归到「auth」这一组
@@ -33,6 +34,8 @@ def _user_out(user: User) -> UserOut:
     return UserOut(
         id=user.id,
         username=user.username,
+        phone=user.phone,
+        real_name=user.real_name,
         role=user.role,
         candidate_id=user.candidate_id,
         is_active=bool(getattr(user, "is_active", 1)),
@@ -40,29 +43,45 @@ def _user_out(user: User) -> UserOut:
     )
 
 
+def _validated_phone(db: Session, raw: str, exclude_user_id: int | None = None) -> str:
+    """HR/管理员的手机号：洗成标准 11 位、验格式、查重（排除自己）。不合格直接 4xx。"""
+    phone = normalize_phone(raw)
+    if not is_valid_phone(phone):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="手机号格式不正确（11 位，1 开头）")
+    dup = select(User.id).where(User.phone == phone)
+    if exclude_user_id is not None:
+        dup = dup.where(User.id != exclude_user_id)
+    if db.scalar(dup):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="手机号已被其他账号使用")
+    return phone
+
+
 @router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterIn, db: Session = Depends(get_db)):
     """注册新用户，成功后直接登录（返回 token）
 
-**干什么用**：第一次用系统先在这里注册一个账号。不需要邮箱手机号，只要用户名和密码。
+**干什么用**：第一次用系统先在这里注册一个账号。
 
 **怎么填**：
 - `username`：2～50 个字，以后登录用它
 - `password`：至少 6 位
+- `phone`：11 位手机号，必填（个人信息强制要求有联系方式）
+- `real_name`：实名，必填
 
 **返回什么**：
 ```json
 {
   "token": "eyJhbGciOi...（一长串）",
   "token_type": "bearer",
-  "user": {"id": 1, "username": "xiaoming", "create_time": "2026-09-08T10:00:00"}
+  "user": {"id": 1, "username": "xiaoming", "phone": "13800138000", "create_time": "2026-09-08T10:00:00"}
 }
 ```
 把 `token` 那一串复制下来，点页面右上角 **Authorize** 粘进去，之后所有接口就能用了。
 
 **可能出错**：
-- 409：这个用户名已经有人用了，换一个
-- 422：用户名太短 / 密码太短
+- 409：这个用户名或手机号已经有人用了，换一个
+- 422：用户名太短 / 密码太短 / 手机号没填
+- 400：手机号格式不对
 
 **注意**：密码不会原样存进数据库，存的是搅碎后的哈希，谁也看不到原文。
 """
@@ -72,8 +91,11 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
     exists = db.scalar(select(User).where(User.username == body.username))  # 查一下这个用户名有没有人用
     if exists:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="用户名已存在")  # 409 = 冲突
+    phone = _validated_phone(db, body.phone)
     user = User(
         username=body.username,
+        phone=phone,
+        real_name=body.real_name.strip(),
         password_hash=hash_password(body.password),
         role="hr",  # 这个入口只注册 HR；技术管理员用脚本创建
         create_time=datetime.now(),
@@ -131,21 +153,23 @@ def me(current: User = Depends(get_current_hr)):
 
 @router.put("/profile", response_model=TokenOut)
 def update_profile(body: ProfileUpdateIn, db: Session = Depends(get_db), current: User = Depends(get_current_hr)):
-    """修改个人信息（用户名 / 密码）
+    """修改个人信息（用户名 / 手机号 / 密码）
 
-**干什么用**：登录后想换个用户名，或者想改密码，都来这里。点页面右上角用户名 →「个人信息」。
+**干什么用**：登录后想换个用户名、补手机号，或者想改密码，都来这里。点页面右上角用户名 →「个人信息」。
 
 **怎么填**：
 - `username`：必填，2～50 个字。和别人重名会被拒。
+- `phone`：必填，11 位手机号。和别人重复会被拒。
+- `real_name`：必填，实名。
 - 要**改密码**时，把三项都填上：`current_password`（当前密码，用来验证是你本人）、`new_password`（至少 6 位）。
-  不改密码就只填 `username`，密码三项留空即可。
+  不改密码就只填 `username`、`phone`、`real_name`，密码三项留空即可。
 
 **返回什么**：和登录一样，会重新发一张 `token` + 用户信息。前端拿到后替换本地保存的登录状态，顶栏用户名立刻更新。
 
 **可能出错**：
-- 400：要改密码但「当前密码」填错了
-- 409：新用户名已经被别人用了
-- 422：用户名长度不对 / 新密码太短
+- 400：要改密码但「当前密码」填错了 / 手机号格式不对
+- 409：新用户名或手机号已经被别人用了
+- 422：用户名长度不对 / 新密码太短 / 手机号没填
 """
     # 改密码：必须先验当前密码。否则只要 token 泄露，别人就能直接把密码改掉、把你锁在门外
     if body.new_password:
@@ -159,6 +183,13 @@ def update_profile(body: ProfileUpdateIn, db: Session = Depends(get_db), current
         if exists:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="用户名已存在")
         current.username = body.username
+
+    # 手机号：个人信息强制要求有，必填且不能和别人重复
+    phone = _validated_phone(db, body.phone, exclude_user_id=current.id)
+    current.phone = phone
+
+    # 实名：个人信息强制要求有
+    current.real_name = body.real_name.strip()
 
     db.commit()
     db.refresh(current)

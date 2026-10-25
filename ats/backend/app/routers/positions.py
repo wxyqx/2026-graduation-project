@@ -14,11 +14,36 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_hr
-from app.models import Application, Position
+from app.models import Application, Position, User
 from app.schemas.position import PositionIn, PositionOut, PositionUpdate
 
 # dependencies=[Depends(get_current_hr)]：这个文件里所有接口都要先过门卫（必须登录）
 router = APIRouter(prefix="/api/positions", tags=["positions"], dependencies=[Depends(get_current_hr)])
+
+
+@router.get("/hr-users")
+def list_hr_users(db: Session = Depends(get_db)):
+    """岗位负责人的候选项：启用中的 HR **实名**（v3.16 起 HR 实名必填）。
+
+- `label`：下拉显示的文字；重名的 HR 自动追加用户名区分（例：张伟（zhang_wm））
+- `value`：选中后存进 Position.owner 的值 = 实名本身
+"""
+    rows = db.scalars(
+        select(User).where(User.role == "hr", User.is_active == 1).order_by(User.username)
+    ).all()
+    items = [
+        {"username": u.username, "real_name": u.real_name, "label": (u.real_name or "").strip() or u.username}
+        for u in rows
+        if u.username
+    ]
+    # 实名重复的在下拉里加用户名后缀区分；存进 owner 的仍是纯实名
+    counts: dict[str, int] = {}
+    for i in items:
+        counts[i["label"]] = counts.get(i["label"], 0) + 1
+    for i in items:
+        if counts[i["label"]] > 1:
+            i["label"] = f'{i["label"]}（{i["username"]}）'
+    return items
 
 
 def _count_map(db: Session) -> dict[int, int]:

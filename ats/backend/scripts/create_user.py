@@ -52,6 +52,8 @@ def main() -> int:
     parser.add_argument("--role", choices=ROLES, help="账号角色：admin 或 hr")
     parser.add_argument("--username", help="登录用户名")
     parser.add_argument("--password", default="admin", help="密码，默认 admin")
+    parser.add_argument("--phone", help="手机号，11 位（新建时必填）")
+    parser.add_argument("--real-name", help="实名（新建时必填）")
     parser.add_argument("--reset", action="store_true", help="账号已存在时重置角色与密码")
     parser.add_argument("--disable", action="store_true", help="停用账号")
     parser.add_argument("--enable", action="store_true", help="启用账号")
@@ -85,8 +87,23 @@ def main() -> int:
         if user is None:
             if not args.role:
                 parser.error("新建账号必须指定 --role admin 或 --role hr")
+            # 手机号必填：与接口口径一致（HR/管理员个人信息强制要求有手机号）
+            from app.services.phone import is_valid_phone, normalize_phone
+
+            phone = normalize_phone(args.phone)
+            if not is_valid_phone(phone):
+                parser.error("新建账号必须提供合法手机号：--phone 13800138000")
+            dup = db.scalar(select(User.id).where(User.phone == phone))
+            if dup:
+                print(f"手机号已被其他账号使用：{phone}")
+                return 1
+            real_name = (args.real_name or "").strip()
+            if not (2 <= len(real_name) <= 50):
+                parser.error("新建账号必须提供实名：--real-name 张三")
             user = User(
                 username=args.username,
+                phone=phone,
+                real_name=real_name,
                 password_hash=hash_password(args.password),
                 role=args.role,
                 is_active=1,

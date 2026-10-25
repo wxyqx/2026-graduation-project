@@ -38,7 +38,7 @@ POSITION_FORM_NAME = "演示-Java岗申请表"
 
 
 def db():
-    return pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database="ats")
+    return pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database=os.getenv("ATS_DB_NAME", "ats"))
 
 
 def cleanup(conn):
@@ -132,7 +132,7 @@ def main() -> int:
         # HR
         r = c.post("/api/auth/login", json={"username": HR_USERNAME, "password": HR_PASSWORD})
         if r.status_code != 200:
-            r = c.post("/api/auth/register", json={"username": HR_USERNAME, "password": HR_PASSWORD})
+            r = c.post("/api/auth/register", json={"username": HR_USERNAME, "password": HR_PASSWORD, "phone": "13912340001", "real_name": "演示HR"})
             r.raise_for_status()
             print(f"创建 HR：{HR_USERNAME} / {HR_PASSWORD}")
         else:

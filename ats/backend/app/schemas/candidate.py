@@ -65,6 +65,8 @@ class CandidateOut(BaseModel):
 
     id: int = Field(description="候选人编号。建投递时 can_id 填这个")
     name: str | None = Field(description="姓名")
+    owner_id: int | None = Field(default=None, description="负责人 HR 编号；NULL=暂无负责人")
+    owner_name: str | None = Field(default=None, description="负责人姓名（实名优先）")
     phone: str | None = Field(default=None, description="手机号（候选人端登录账号）")
     email: str | None = Field(default=None, description="邮箱")
     remark: str | None = Field(description="备注")

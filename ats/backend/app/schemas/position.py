@@ -8,7 +8,7 @@ class PositionIn(BaseModel):
     """新建岗位要填的表。只有岗位名称是必填的。"""
 
     position_name: str = Field(min_length=1, max_length=100, description="岗位名称（必填）。例：Java高级工程师")
-    owner: str | None = Field(default=None, max_length=100, description="招聘负责人，可不填。例：王HR")
+    owner: str | None = Field(default=None, max_length=100, description="招聘负责人 = HR 实名，可不填。例：张三")
     position_requirements: str | None = Field(
         default=None,
         max_length=2000,
@@ -21,7 +21,7 @@ class PositionIn(BaseModel):
             "examples": [
                 {
                     "position_name": "Java高级工程师",
-                    "owner": "王HR",
+                    "owner": "张三",
                     "position_requirements": "3年以上Java开发经验，熟悉Spring Boot、MySQL、Redis；有电商系统经验优先",
                 }
             ]
@@ -44,8 +44,8 @@ class PositionUpdate(BaseModel):
     """编辑岗位时填的表。所有字段都可不填——没填的就保持原样不动。"""
 
     position_name: str | None = Field(default=None, min_length=1, max_length=100, description="新的岗位名称，不改就别传")
-    owner: str | None = Field(default=None, max_length=100, description="新的负责人，不改就别传")
+    owner: str | None = Field(default=None, max_length=100, description="新的负责人（HR 实名），不改就别传")
     position_requirements: str | None = Field(default=None, max_length=2000, description="新的岗位要求，不改就别传")
     is_hidden: bool | None = Field(default=None, description="设为暂不招(true)或恢复在招(false)，不改就别传")
 
-    model_config = {"json_schema_extra": {"examples": [{"owner": "李HR"}]}}
+    model_config = {"json_schema_extra": {"examples": [{"owner": "李四"}]}}

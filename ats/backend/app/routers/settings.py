@@ -97,6 +97,7 @@ class StageNoticeIn(BaseModel):
     hr: StageNoticeEntry = Field(default_factory=StageNoticeEntry)
     final: StageNoticeEntry = Field(default_factory=StageNoticeEntry)
     onboard: StageNoticeEntry = Field(default_factory=StageNoticeEntry, description='入职通知（HR 回传盖章文件时生成草稿）')
+    eliminated: StageNoticeEntry = Field(default_factory=StageNoticeEntry, description='淘汰通知（打 fail 淘汰时立即发送）')
 
 
 @router.get("/stage-notice")
@@ -112,4 +113,6 @@ def set_stage_notice(body: StageNoticeIn, db: Session = Depends(get_db), user: U
 **干什么用**：候选人通过笔试/专业面/HR面/终面时，若该关开关开启，系统按模板渲染后给候选人发一条通知，
 候选人下次登录时弹窗展示。占位符：`{候选人}` `{岗位}` `{关卡}`；某关不想发就把它的开关关掉。
 """
-    return settings_svc.set_stage_notice(db, body.model_dump())
+    # exclude_unset：只取客户端真正发了的关卡（配合 service 层合并式保存，
+    # 部分保存不再把没传的关抹成默认——这里曾两次丢过 HR 自己保存的模板）
+    return settings_svc.set_stage_notice(db, body.model_dump(exclude_unset=True))

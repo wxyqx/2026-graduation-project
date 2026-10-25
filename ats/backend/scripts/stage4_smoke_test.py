@@ -92,7 +92,7 @@ def main() -> int:
     conn = None
     try:
         # 让测试 deterministic：先关掉库里已有的 AI 配置，结束时恢复
-        conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database="ats")
+        conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database=os.getenv("ATS_DB_NAME", "ats"))
         cur = conn.cursor()
         cur.execute("SELECT ID, is_enabled FROM AI_API_Config")
         prev_configs = [(int(a), int(b)) for a, b in cur.fetchall()]
@@ -100,7 +100,7 @@ def main() -> int:
         conn.commit()
 
         # ---------- 准备 ----------
-        r = c.post("/api/auth/register", json={"username": f"stage4_hr_{tag}", "password": "secret123"})
+        r = c.post("/api/auth/register", json={"username": f"stage4_hr_{tag}", "password": "secret123", "real_name": "测试HR", "phone": "139" + tag[-8:]})
         check("注册 HR", r.status_code == 201, r.text[:150])
         H = {"Authorization": f"Bearer {r.json()['token']}"}
         ids["users"].append(r.json()["user"]["id"])
@@ -167,6 +167,9 @@ def main() -> int:
         TECH = {"Authorization": f"Bearer {ra.json()['token']}"}
         srv = HTTPServer(("127.0.0.1", MOCK_PORT), MockLLM)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
+        # 表单可见阶段默认 pro 起（v3.16），测试要在投递后就能填，先改成 ai 起
+        c.put("/api/settings/portal-form-stage", headers=H, json={"position": "ai", "assessment": "ai"})
+
         r = c.post("/api/tech/ai-configs", headers=TECH, json={
             "name": "stage4-mock", "base_url": f"http://127.0.0.1:{MOCK_PORT}/v1",
             "api_key": "k", "model": "m", "is_enabled": True,
@@ -260,7 +263,7 @@ def main() -> int:
             srv.shutdown()
         try:
             if conn is None:
-                conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database="ats")
+                conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database=os.getenv("ATS_DB_NAME", "ats"))
             cur = conn.cursor()
             cand_ids = ",".join(map(str, ids["candidates"])) or "0"
             app_ids = ",".join(map(str, ids["applications"])) or "0"

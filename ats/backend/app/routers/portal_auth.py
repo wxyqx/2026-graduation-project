@@ -27,7 +27,7 @@ from app.schemas.portal_auth import (
     PortalTokenOut,
     PortalUserOut,
 )
-from app.services import accounts, ratelimit
+from app.services import accounts, notice_service, ratelimit
 from app.services.log_service import log_action
 from app.services.phone import is_valid_phone, normalize_phone
 from app.services.security import create_access_token, hash_password, verify_password
@@ -112,12 +112,21 @@ def login(body: PortalLoginIn, request: Request, db: Session = Depends(get_db)):
         user = accounts.ensure_candidate_account(db, candidate)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号未开通，请联系 HR")
-    if getattr(user, "is_active", 1) == 0:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已停用，请联系 HR")
 
     if not verify_password(body.password, user.password_hash):
         ratelimit.record_failure(key, window)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="手机号或密码错误")
+
+    # 淘汰销号检查：淘汰超 2 天的账号登录被拦，拦截信息 = 淘汰通知模板渲染的说明（顺手销号）。
+    # 放在密码验证之后：不给不知道密码的人探测「这个人被淘汰了」的机会
+    blocked = notice_service.elimination_block(db, candidate.id, deactivate=True)
+    if blocked:
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=blocked)
+
+    # 被管理员手动停用的账号（与淘汰销号区分开，提示联系 HR）
+    if getattr(user, "is_active", 1) == 0:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已停用，请联系 HR")
 
     # 登录成功：清空失败记录、记录登录时间与 IP、写操作日志
     ratelimit.reset(key)

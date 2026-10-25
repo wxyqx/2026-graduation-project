@@ -138,7 +138,7 @@ def _fallback_name(item: IntakeItem) -> str | None:
     return None
 
 
-def _persist(db: Session, item: IntakeItem, now: datetime) -> None:
+def _persist(db: Session, item: IntakeItem, now: datetime, owner_id: int | None = None) -> None:
     """第 3 步：根据 AI 的回答写数据库。一次处理一份。
 
     顺序是：整理回答 → 检查岗位 → 检查姓名和成绩 → 找/建候选人 → 查重 → 建投递并推进。
@@ -195,7 +195,9 @@ def _persist(db: Session, item: IntakeItem, now: datetime) -> None:
                 candidate = by_name
 
     if candidate is None:
-        candidate = Candidate(name=name, phone=phone, remark=remark, create_time=now, update_time=now)
+        candidate = Candidate(
+            name=name, phone=phone, remark=remark, owner_id=owner_id, create_time=now, update_time=now
+        )  # owner_id：上传简历的 HR 默认成为候选人负责人
         db.add(candidate)
         db.flush()  # flush = 先写进数据库拿到自动分配的 ID，但还没最终确认（commit）
     else:
@@ -245,6 +247,7 @@ async def run_intake(
     extras: dict[str, str] | None = None,
     pos_id: int | None = None,
     user_rules: str | None = None,
+    owner_id: int | None = None,
 ) -> dict:
     """总入口：接口层把文件和文字交过来，这里跑完三步流水线，返回每一份的结果。
 
@@ -315,7 +318,7 @@ async def run_intake(
             if it.status != "pending":
                 continue  # 第 2 步已经标记 error 的跳过
             try:
-                _persist(db, it, now)
+                _persist(db, it, now, owner_id)
             except Exception as e:  # 单条落库异常不影响其他条目
                 db.rollback()  # 把这一条没确认的改动全撤掉，数据库回到干净状态
                 it.status, it.message = "error", f"写入数据库失败：{e.__class__.__name__}"

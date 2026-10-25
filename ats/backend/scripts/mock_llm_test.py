@@ -73,13 +73,13 @@ def main():
         print(f"  ok  {msg}")
 
     try:
-        r = c.post("/api/auth/register", json={"username": f"mock_{STAMP}", "password": "secret123"})
+        r = c.post("/api/auth/register", json={"username": f"mock_{STAMP}", "password": "secret123", "real_name": "测试HR", "phone": "139" + STAMP[-8:]})
         ids["users"].append(r.json()["user"]["id"])
         H = {"Authorization": f"Bearer {r.json()['token']}"}
         # v3.15：AI 配置是系统级的，由技术管理员维护
         ra = c.post("/api/tech/auth/login", json={"username": "tech", "password": "admin"})
         T = {"Authorization": f"Bearer {ra.json()['token']}"}
-        conn0 = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database="ats")
+        conn0 = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
         cur0 = conn0.cursor()
         cur0.execute("SELECT ID, is_enabled FROM AI_API_Config")
         prev_configs.extend((int(a), int(b)) for a, b in cur0.fetchall())
@@ -104,7 +104,7 @@ def main():
         r = c.post("/api/ai-screen/intake", headers=H, data={"texts": texts, "pos_id": p1})
         check(r.status_code == 200, "intake 200")
         res = r.json()["results"]
-        check(res[0]["status"] == "ok" and res[0]["ai_result"] == "pass" and res[0]["config_used"] == "mock", "第 0 条：死配置失败后换 mock 成功（重试生效）")
+        check(res[0]["status"] == "ok" and res[0]["ai_result"] == "pass" and res[0]["config_used"] == "mock", f"第 0 条：死配置失败后换 mock 成功（重试生效） {res[0]}")
         check(res[0]["candidate_name"] == f"王五_{STAMP}" and res[0]["position_id"] == p1 and res[0]["application_id"], "识别姓名 + 匹配岗位 + 建档")
         d = c.get(f"/api/applications/{res[0]['application_id']}", headers=H).json()
         check(d["current_stage"] == "resume" and d["overall_status"] == "pending" and d["ai_result"] == "pass" and d["ai_comment"] == "mock 评估理由", "pass 自动推进到 resume 并写 ai_comment")
@@ -130,7 +130,7 @@ def main():
         check(len(c.get("/api/applications", headers=H, params={"pos_id": p1}).json()) == 3, "投递仍为 3 条")
         print(f"\n全部通过：{ok} 项断言")
     finally:
-        conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database="ats")
+        conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
         cur = conn.cursor()
         cur.execute(f"DELETE FROM Application WHERE Pos_ID IN ({','.join(map(str, ids['positions'])) or 0})")
         cur.execute(f"DELETE FROM User WHERE role='candidate' AND candidate_id IN (SELECT ID FROM Candidate WHERE name LIKE '%{STAMP}%')")

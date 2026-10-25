@@ -52,11 +52,12 @@ def run():
     print("== health / auth")
     check(c.get("/api/health").json()["database"] == "up", "health ok")
     ua, pw = f"smoke_{STAMP}", "secret123"
-    r = c.post("/api/auth/register", json={"username": ua, "password": pw})
+    up = "139" + STAMP[-8:]  # 手机号也用时间戳拼，重跑不撞
+    r = c.post("/api/auth/register", json={"username": ua, "password": pw, "real_name": "测试HR", "phone": up})
     check(r.status_code == 201 and r.json()["token"], "register 201 + token")
     created["users"].append(r.json()["user"]["id"])
-    check(c.post("/api/auth/register", json={"username": ua, "password": pw}).status_code == 409, "重名 409")
-    check(c.post("/api/auth/register", json={"username": "a", "password": pw}).status_code == 422, "用户名过短 422")
+    check(c.post("/api/auth/register", json={"username": ua, "password": pw, "real_name": "测试HR", "phone": up}).status_code == 409, "重名 409")
+    check(c.post("/api/auth/register", json={"username": "a", "password": pw, "real_name": "测试HR", "phone": "138" + STAMP[-8:]}).status_code == 422, "用户名过短 422")
     check(c.post("/api/auth/login", json={"username": ua, "password": "wrong"}).status_code == 401, "密码错误 401")
     r = c.post("/api/auth/login", json={"username": ua, "password": pw})
     check(r.status_code == 200, "login 200")
@@ -68,30 +69,30 @@ def run():
     check(c.get("/api/applications").status_code == 401, "业务接口无 token 401")
 
     print("== 个人信息（改用户名 / 改密码）")
-    check(c.put("/api/auth/profile", json={"username": "x"}).status_code == 401, "改个人信息未登录 401")
+    check(c.put("/api/auth/profile", json={"username": "x", "phone": "13700000001", "real_name": "测试HR"}).status_code == 401, "改个人信息未登录 401")
     # 先造一个「别人」，用来验证改成别人用户名会 409
     other = f"smoke_other_{STAMP}"
-    ro = c.post("/api/auth/register", json={"username": other, "password": pw})
+    ro = c.post("/api/auth/register", json={"username": other, "password": pw, "real_name": "测试HR", "phone": "137" + STAMP[-8:]})
     created["users"].append(ro.json()["user"]["id"])
     # 改用户名：成功后返回新 token，用新 token 问「我是谁」应看到新名字
     new_name = f"{ua}_new"
-    check(c.put("/api/auth/profile", headers=H, json={"username": new_name}).status_code == 200, "改用户名 200")
-    check(c.put("/api/auth/profile", headers=H, json={"username": other}).status_code == 409, "改成别人用户名 409")
-    check(c.put("/api/auth/profile", headers=H, json={"username": "a"}).status_code == 422, "用户名过短 422")
-    token2 = c.put("/api/auth/profile", headers=H, json={"username": new_name}).json()["token"]
+    check(c.put("/api/auth/profile", headers=H, json={"username": new_name, "phone": "13700000001", "real_name": "测试HR"}).status_code == 200, "改用户名 200")
+    check(c.put("/api/auth/profile", headers=H, json={"username": other, "phone": "13700000001", "real_name": "测试HR"}).status_code == 409, "改成别人用户名 409")
+    check(c.put("/api/auth/profile", headers=H, json={"username": "a", "phone": "13700000001", "real_name": "测试HR"}).status_code == 422, "用户名过短 422")
+    token2 = c.put("/api/auth/profile", headers=H, json={"username": new_name, "phone": "13700000001", "real_name": "测试HR"}).json()["token"]
     H = {"Authorization": f"Bearer {token2}"}
     check(c.get("/api/auth/me", headers=H).json()["username"] == new_name, "新 token 反映新用户名")
     # 改回原名，免得影响后面用例里用过的 ua
-    token = c.put("/api/auth/profile", headers=H, json={"username": ua}).json()["token"]
+    token = c.put("/api/auth/profile", headers=H, json={"username": ua, "phone": "13700000001", "real_name": "测试HR"}).json()["token"]
     H = {"Authorization": f"Bearer {token}"}
     check(c.get("/api/auth/me", headers=H).json()["username"] == ua, "改回原名")
     # 改密码：当前密码不对 / 不填当前密码，都拒绝（400）
-    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "current_password": "wrong", "new_password": "newsecret456"}).status_code == 400, "当前密码错 400")
-    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "new_password": "newsecret456"}).status_code == 400, "缺当前密码 400")
+    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "current_password": "wrong", "new_password": "newsecret456", "phone": "13700000001", "real_name": "测试HR"}).status_code == 400, "当前密码错 400")
+    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "new_password": "newsecret456", "phone": "13700000001", "real_name": "测试HR"}).status_code == 400, "缺当前密码 400")
     # 正常改密码：旧密码失效、新密码可登录
-    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "current_password": pw, "new_password": "newsecret456"}).status_code == 200, "改密码 200")
+    check(c.put("/api/auth/profile", headers=H, json={"username": ua, "current_password": pw, "new_password": "newsecret456", "phone": "13700000001", "real_name": "测试HR"}).status_code == 200, "改密码 200")
     check(c.post("/api/auth/login", json={"username": ua, "password": pw}).status_code == 401, "旧密码失效 401")
-    check(c.post("/api/auth/login", json={"username": ua, "password": "newsecret456"}).status_code == 200, "新密码可登录")
+    check(c.post("/api/auth/login", json={"username": ua, "password": "newsecret456", "phone": "13700000001", "real_name": "测试HR"}).status_code == 200, "新密码可登录")
 
     print("== positions")
     r = c.post("/api/positions", headers=H, json={"position_name": f"Java工程师_{STAMP}", "owner": "HR-A",
@@ -138,7 +139,7 @@ def run():
     check(c.get("/api/applications", headers=H, params={"status": "pending"}).status_code == 200, "按状态筛选")
 
     # 两个小快捷函数：adv = 推进某一关，rev = 撤回。lambda 是「一行写完的小函数」
-    adv = lambda aid, fs, res: c.post(f"/api/applications/{aid}/advance", headers=H, json={"fromStage": fs, "result": res})
+    adv = lambda aid, fs, res: c.post(f"/api/applications/{aid}/advance", headers=H, json={"fromStage": fs, "result": res, "confirm_eliminate": res == "fail"})
     rev = lambda aid, to=None: c.post(f"/api/applications/{aid}/revert", headers=H, json={"toStage": to} if to else {})
 
     check(adv(a1, "resume", "pass").status_code == 409, "fromStage 不匹配 409")
@@ -282,7 +283,7 @@ def run():
     check(c.get("/api/tech/accounts", headers=H).status_code == 403, "HR 不能访问技术管理接口")
 
     # 先把库里已有的 AI 配置全部停用，保证「无配置」分支可测；结束时恢复
-    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database="ats")
+    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
     cur = conn.cursor()
     cur.execute("SELECT ID, is_enabled FROM AI_API_Config")
     created["config_prev"] = [(int(a), int(b)) for a, b in cur.fetchall()]
@@ -410,7 +411,7 @@ def run():
 
     print("== 面试行口径：三关任一在范围内 + 面过被淘汰也计入 ==")
     # 造三个人，验证新口径（用直连 SQL 回拨时间戳，构造「跨时间范围」场景）
-    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database="ats")
+    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
     cur = conn.cursor()
 
     def new_cand_app(name, pos_id):
@@ -424,7 +425,7 @@ def run():
     def push(app_id, stages, results):
         """把投递按给定阶段/结果推进。stages=['ai','resume',...]，results 与之对应（默认全 pass）。"""
         for st, res in zip(stages, results):
-            r = c.post(f"/api/applications/{app_id}/advance", headers=H, json={"fromStage": st, "result": res})
+            r = c.post(f"/api/applications/{app_id}/advance", headers=H, json={"fromStage": st, "result": res, "confirm_eliminate": res == "fail"})
             assert r.status_code == 200, f"推进 {st} 失败：{r.text}"
 
     def interview_cell(pos_id, rng="week"):
@@ -534,7 +535,7 @@ def run():
 
 def cleanup():
     """把这次测试建的数据全删掉，让数据库恢复干净。删除顺序有讲究：先删「引用别人的」（投递），再删「被引用的」（候选人、岗位）。"""
-    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database="ats")
+    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
     cur = conn.cursor()
     def dele(table, ids):
         if ids:

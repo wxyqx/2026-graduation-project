@@ -19,7 +19,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_hr
 from app.models import Application, Candidate, User
 from app.schemas.candidate import CandidateIn, CandidateOut, CandidateUpdate
-from app.services import accounts
+from app.services import accounts, ownership
 from app.services.phone import is_valid_phone, normalize_phone
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"], dependencies=[Depends(get_current_hr)])
@@ -28,6 +28,8 @@ router = APIRouter(prefix="/api/candidates", tags=["candidates"], dependencies=[
 def _out(c: Candidate, count: int = 0, has_account: bool = False) -> CandidateOut:
     return CandidateOut(
         id=c.id,
+        owner_id=c.owner_id,
+        owner_name=_hr_display(c.owner),
         name=c.name,
         phone=c.phone,
         email=c.email,
@@ -44,6 +46,11 @@ def _out(c: Candidate, count: int = 0, has_account: bool = False) -> CandidateOu
         application_count=count,
         has_account=has_account,
     )
+
+
+def _hr_display(u) -> str | None:
+    """HR 显示名：实名优先。"""
+    return None if u is None else (u.real_name or u.username)
 
 
 def _account_ids(db: Session) -> set[int]:
@@ -124,7 +131,9 @@ def list_candidates(
 
 
 @router.post("", response_model=CandidateOut, status_code=status.HTTP_201_CREATED)
-def create_candidate(body: CandidateIn, db: Session = Depends(get_db)):
+def create_candidate(
+    body: CandidateIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)
+):
     """手动新建一个候选人
 
 **干什么用**：来了个应聘的人，先把他录进系统。（用「AI 录入」传简历的话不用手动建，AI 会自动建。）
@@ -151,6 +160,7 @@ def create_candidate(body: CandidateIn, db: Session = Depends(get_db)):
         phone=phone,
         email=(body.email or "").strip() or None,
         remark=body.remark,
+        owner_id=user.id,  # 默认负责人 = 建档的 HR
         create_time=now,
         update_time=now,
     )
@@ -186,7 +196,10 @@ def get_candidate(can_id: Annotated[int, Path(description="候选人编号")], d
 
 @router.put("/{can_id}", response_model=CandidateOut)
 def update_candidate(
-    can_id: Annotated[int, Path(description="候选人编号")], body: CandidateUpdate, db: Session = Depends(get_db)
+    can_id: Annotated[int, Path(description="候选人编号")],
+    body: CandidateUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_hr),
 ):
     """改候选人：可以改备注，也可以改姓名
 
@@ -208,6 +221,11 @@ def update_candidate(
 - 409：新姓名与已有候选人重名（需带 confirm_duplicate=true 确认）
 """
     c = _get_or_404(db, can_id)
+    # 资料编辑权限：负责人本人；暂无负责人的候选人任意 HR 可改
+    try:
+        ownership.ensure_can_edit_candidate(db, c, user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     # model_fields_set = 前端真正传了的字段集合。这样能区分「没传某个字段」和「传了但值是空」
     if "remark" in body.model_fields_set:
         c.remark = body.remark

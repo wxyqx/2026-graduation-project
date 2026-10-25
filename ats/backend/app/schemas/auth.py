@@ -15,8 +15,16 @@ class RegisterIn(BaseModel):
 
     username: str = Field(min_length=2, max_length=50, description="用户名，2～50 个字，登录时用它。例：xiaoming")
     password: str = Field(min_length=6, max_length=72, description="密码，至少 6 位。只会存「搅碎后的哈希」，谁也看不到原文")
+    phone: str = Field(description="手机号，11 位（必填）。例：13800138000")
+    real_name: str = Field(min_length=2, max_length=50, description="实名（必填）。例：张三")
 
-    model_config = {"json_schema_extra": {"examples": [{"username": "xiaoming", "password": "secret123"}]}}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"username": "xiaoming", "password": "secret123", "phone": "13800138000", "real_name": "张三"}
+            ]
+        }
+    }
 
 
 class LoginIn(BaseModel):
@@ -32,6 +40,8 @@ class ProfileUpdateIn(BaseModel):
     """修改个人信息要填的表。用户名必填；只有「要改密码」时才需要把密码三项一起填。"""
 
     username: str = Field(min_length=2, max_length=50, description="用户名，2～50 个字，登录时用它")
+    phone: str = Field(description="手机号，11 位（必填）。例：13800138000")
+    real_name: str = Field(min_length=2, max_length=50, description="实名（必填）。例：张三")
     current_password: str | None = Field(
         default=None, description="当前密码：只在要改密码时必填，用于验证身份（防止别人拿到 token 就改密码）"
     )
@@ -54,6 +64,8 @@ class UserOut(BaseModel):
 
     id: int = Field(description="用户编号，数据库自动分配")
     username: str | None = Field(default=None, description="用户名；候选人账号没有用户名（null）")
+    phone: str | None = Field(default=None, description="HR/管理员的手机号；候选人的手机号在候选人档案里（null）")
+    real_name: str | None = Field(default=None, description="HR/管理员的实名；候选人的姓名在候选人档案里（null）")
     role: str = Field(description="角色：hr=HR / admin=技术管理员 / candidate=候选人")
     candidate_id: int | None = Field(default=None, description="候选人账号关联的候选人编号；HR/管理员为 null")
     is_active: bool = Field(default=True, description="账号是否启用")

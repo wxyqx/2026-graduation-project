@@ -73,5 +73,23 @@ def require_role(*roles: str):
 
 # 三个端各一个，名字短、写起来清楚
 get_current_hr = require_role("hr")
-get_current_candidate = require_role("candidate")
 get_current_admin = require_role("admin")
+
+
+def get_current_candidate(
+    user: User = Depends(require_role("candidate")),
+    db: Session = Depends(get_db),
+) -> User:
+    """候选人门卫：角色检查之外，还执行「淘汰 2 天销号」。
+
+    被淘汰的候选人保留期一过，即使 token 还没过期（有效期 30 天），这里也拦下——
+    拦截信息用淘汰通知模板渲染，候选人在登录页/接口报错里都能看到被淘汰的说明。
+    """
+    if user.candidate_id:
+        from app.services import notice_service
+
+        blocked = notice_service.elimination_block(db, user.candidate_id, deactivate=True)
+        if blocked:
+            db.commit()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=blocked)
+    return user

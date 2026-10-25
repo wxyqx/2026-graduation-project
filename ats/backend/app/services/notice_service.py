@@ -7,14 +7,19 @@ HR 在投递详情「候选人通知」里逐人编辑后确认发送，发送�
 模板占位符：{候选人} {岗位} {关卡}，生成草稿时渲染，之后 HR 还可逐人修改。
 """
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Application, Candidate, CandidateFile, CandidateNotice, Position
 from app.services import settings as settings_svc
-from app.services.state_machine import STAGE_LABELS
+from app.services.state_machine import STAGES, STAGE_FIELDS, STAGE_LABELS
+
+# 淘汰候选人的账号保留期：淘汰后多少天内还能登录查看通知，过期销号
+ELIMINATE_KEEP_DAYS = 2
+# 销号后数据保存期：候选人资料/投递/通知全部保留，技术管理员在此期限内可恢复账号
+RETENTION_DAYS = 90
 
 
 def send_stage_notice(db: Session, app: Application, stage: str) -> None:
@@ -36,16 +41,9 @@ def send_stage_notice(db: Session, app: Application, stage: str) -> None:
         return
     cand = db.get(Candidate, app.can_id)
     pos = db.get(Position, app.pos_id) if app.pos_id else None
-    values = {
-        "候选人": (cand.name if cand else None) or "候选人",
-        "岗位": (pos.position_name if pos else None) or "在招岗位",
-        # onboard（入职通知）不在 7 关流程里，关卡名直接叫「入职」
-        "关卡": "入职" if stage == "onboard" else STAGE_LABELS.get(stage, stage),
-    }
+    values = _template_values(db, app, stage)
     def render(text: str) -> str:
-        for k, v in values.items():
-            text = text.replace("{" + k + "}", v)
-        return text
+        return _render(text, values)
 
     # 生成草稿：Send_Time 为空，候选人不可见；HR 在投递详情逐人编辑后再发送
     db.add(
@@ -59,6 +57,120 @@ def send_stage_notice(db: Session, app: Application, stage: str) -> None:
         )
     )
     db.flush()
+
+
+def _template_values(db: Session, app: Application, stage: str) -> dict[str, str]:
+    """模板占位符取值：{候选人} {岗位} {关卡}。"""
+    cand = db.get(Candidate, app.can_id)
+    pos = db.get(Position, app.pos_id) if app.pos_id else None
+    return {
+        "候选人": (cand.name if cand else None) or "候选人",
+        "岗位": (pos.position_name if pos else None) or "在招岗位",
+        # onboard（入职通知）不在 7 关流程里，关卡名直接叫「入职」
+        "关卡": "入职" if stage == "onboard" else STAGE_LABELS.get(stage, stage),
+    }
+
+
+def _render(text: str, values: dict[str, str]) -> str:
+    for k, v in values.items():
+        text = text.replace("{" + k + "}", v)
+    return text
+
+
+def send_eliminate_notice(db: Session, app: Application, stage: str) -> None:
+    """这关被打 fail 且投递就此淘汰（overall_status=fail）时，按「淘汰」模板**立即**发一条通知。
+
+    立即写入发送时间：候选人保留期内登录，未读弹窗就能看到淘汰通知；
+    超过保留期登录被拦时，拦截信息也用这份模板渲染。同投递去重（撤回再淘汰不重发）。
+    调用方负责 commit。
+    """
+    cfg = settings_svc.get_stage_notice(db).get("eliminated") or {}
+    if not cfg.get("enabled"):
+        return
+    cand = db.get(Candidate, app.can_id)
+    # 与通过通知同样的边界：没手机号 = 没候选人端账号，发不出去
+    if not (cand and cand.phone):
+        return
+    exists = db.scalar(
+        select(CandidateNotice).where(
+            CandidateNotice.candidate_id == app.can_id,
+            CandidateNotice.application_id == app.id,
+            CandidateNotice.stage == "eliminated",
+        )
+    )
+    if exists is not None:
+        return
+    values = _template_values(db, app, stage)
+    db.add(
+        CandidateNotice(
+            candidate_id=app.can_id,
+            application_id=app.id,
+            stage="eliminated",
+            title=_render(cfg.get("title") or "", values)[:100] or "应聘结果通知",
+            body=_render(cfg.get("body") or "", values)[:5000] or None,
+            send_time=datetime.now(),  # 立即发送，不等 HR 确认
+        )
+    )
+    db.flush()
+
+
+# ---- 淘汰销号：淘汰后 ELIMINATE_KEEP_DAYS 天内还能登录看通知，过期登录被拦 ----
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _fail_stage_time(app: Application) -> tuple[str, datetime | None]:
+    """这投递是在哪一关被打 fail 的、那一关的时间戳（ai 关没有时间列，退回 update_time）。"""
+    for stage in reversed(STAGES):
+        result_field, time_field = STAGE_FIELDS[stage]
+        if getattr(app, result_field, None) == "fail":
+            return stage, (getattr(app, time_field) if time_field else None) or app.update_time
+    return "", None
+
+
+def latest_elimination(db: Session, candidate_id: int) -> tuple[Application, str, datetime] | None:
+    """这位候选人最近一次被淘汰的记录：(投递, 关卡, 淘汰时间)。没有就 None。"""
+    best = None
+    for a in db.scalars(
+        select(Application).where(Application.can_id == candidate_id, Application.overall_status == "fail")
+    ).all():
+        stage, t = _fail_stage_time(a)
+        if t and (best is None or t > best[2]):
+            best = (a, stage, t)
+    return best
+
+
+def eliminate_notice_text(db: Session, app: Application, stage: str) -> str:
+    """把淘汰通知模板渲染成纯文字（去掉富文本标签），给登录拦截信息用。"""
+    cfg = settings_svc.get_stage_notice(db).get("eliminated") or {}
+    values = _template_values(db, app, stage)
+    title = _render(cfg.get("title") or "", values)
+    body = _render(cfg.get("body") or "", values)
+    text = _TAG_RE.sub("", f"{title}　{body}" if body else title)
+    return text.strip() or "很遗憾，您应聘的岗位未能通过，账号已按规则注销。如有疑问请联系 HR。"
+
+
+def elimination_block(db: Session, candidate_id: int, *, deactivate: bool = False) -> str | None:
+    """淘汰保留期检查（候选人登录、候选人门卫都走这里）。
+
+    - 淘汰后保留期内：返回 None，正常放行（淘汰通知由通知体系的未读弹窗展示）。
+    - 超过保留期：deactivate=True 时顺手销号（is_active=0），并返回给候选人看的淘汰说明文字。
+    - 技术管理员恢复过（restore_time 晚于这次淘汰时间）：不再拦截，恢复期内数据一直保留。
+    """
+    from app.services.accounts import get_candidate_user
+
+    user = get_candidate_user(db, candidate_id)
+    info = latest_elimination(db, candidate_id)
+    if info is None:
+        return None
+    app, stage, t = info
+    if datetime.now() <= t + timedelta(days=ELIMINATE_KEEP_DAYS):
+        return None
+    if user is not None and user.restore_time and user.restore_time > t:
+        return None
+    if deactivate and user is not None and getattr(user, "is_active", 1) != 0:
+        user.is_active = 0
+    return eliminate_notice_text(db, app, stage)
 
 
 def list_app_notices(db: Session, application_id: int) -> list[CandidateNotice]:

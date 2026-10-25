@@ -31,11 +31,20 @@ class AdvanceIn(BaseModel):
         ),
     )
     result: str = Field(description="这一关的结果：pass=通过（进下一关）/ fail=淘汰（流程结束）")
+    confirm_eliminate: bool = Field(
+        default=False,
+        description="淘汰确认：result=fail 会淘汰候选人并触发「淘汰通知 + 2 天后销号」，必须先确认（传 true）才能执行",
+    )
 
     # 允许两种写法都能传进来（fromStage 或 from_stage）
     model_config = {
         "populate_by_name": True,
-        "json_schema_extra": {"examples": [{"fromStage": "ai", "result": "pass"}]},
+        "json_schema_extra": {
+            "examples": [
+                {"fromStage": "ai", "result": "pass"},
+                {"fromStage": "pro", "result": "fail", "confirm_eliminate": True},
+            ]
+        },
     }
 
 

@@ -45,7 +45,7 @@ def main() -> int:
     ids = {"users": [], "candidates": [], "positions": [], "templates": [], "applications": []}
     try:
         # ---------- 准备 ----------
-        r = c.post("/api/auth/register", json={"username": f"stage3_hr_{tag}", "password": "secret123"})
+        r = c.post("/api/auth/register", json={"username": f"stage3_hr_{tag}", "password": "secret123", "real_name": "测试HR", "phone": "139" + tag[-8:]})
         check("注册 HR", r.status_code == 201, r.text[:150])
         H = {"Authorization": f"Bearer {r.json()['token']}"}
         ids["users"].append(r.json()["user"]["id"])
@@ -95,7 +95,7 @@ def main() -> int:
             files={"file": ("候选人想上传.pdf", pdf, "application/pdf")},
             data={"category": "resume"},
         )
-        check("候选人不能上传文件（405）", r.status_code == 405, f"{r.status_code}")
+        check("候选人传简历类文件被拒", r.status_code in (400, 405, 422), f"{r.status_code}")
         r = c.delete(f"/api/portal/files/{f1['id']}", headers=C1)
         check("候选人不能删除文件（404/405）", r.status_code in (404, 405), f"{r.status_code}")
 
@@ -227,6 +227,9 @@ def main() -> int:
         t2 = r.json()
         ids["templates"].append(t2["id"])
 
+        # 表单可见阶段默认 pro 起（v3.16），测试要投递后即可填，先改成 ai 起
+        c.put("/api/settings/portal-form-stage", headers=H, json={"position": "ai", "assessment": "ai"})
+
         r = c.post("/api/applications", headers=H, json={"can_id": cand1, "pos_id": pos})
         check("建投递", r.status_code == 201, r.text[:200])
         app_id = r.json()["id"]
@@ -268,7 +271,7 @@ def main() -> int:
     finally:
         # 数据库清理：按依赖顺序删
         try:
-            conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database="ats")
+            conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=DB_PW, database=os.getenv("ATS_DB_NAME", "ats"))
             cur = conn.cursor()
             cand_ids = ",".join(map(str, ids["candidates"])) or "0"
             tpl_ids = ",".join(map(str, ids["templates"])) or "0"

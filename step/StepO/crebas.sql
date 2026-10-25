@@ -59,6 +59,7 @@ CREATE TABLE `Candidate` (
   `phone`       VARCHAR(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '手机号：候选人端登录账号，唯一',
   `email`       VARCHAR(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '邮箱（可空，不做验证）',
   `remark`          VARCHAR(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '备注',
+  `owner_id`        INT DEFAULT NULL COMMENT '候选人负责人 HR（User.ID）；NULL=暂无，任意 HR 可编辑',
   `onboard_date`    VARCHAR(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '到岗时间（HR 从简历摘录，可写「随时」等）',
   `school`          VARCHAR(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '毕业院校',
   `degree`          VARCHAR(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '学历（大专/本科/硕士/博士/其他）',
@@ -69,7 +70,9 @@ CREATE TABLE `Candidate` (
   `work_experience` TEXT COLLATE utf8mb4_unicode_ci COMMENT '工作经历（HR 从简历摘录）',
   `update_time`     DATETIME DEFAULT NULL COMMENT '最近更新时间',
   PRIMARY KEY (`ID`),
-  UNIQUE KEY `UK_Candidate_Phone` (`phone`)
+  UNIQUE KEY `UK_Candidate_Phone` (`phone`),
+  CONSTRAINT `FK_Candidate_Owner` FOREIGN KEY (`owner_id`) REFERENCES `User` (`ID`)
+      ON DELETE SET NULL ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='候选人基础信息';
 
@@ -79,10 +82,13 @@ CREATE TABLE `Candidate` (
 CREATE TABLE `User` (
   `ID`             INT NOT NULL AUTO_INCREMENT,
   `username`       VARCHAR(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'HR/技术管理员用户名；候选人账号为 NULL',
+  `phone`          VARCHAR(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'HR/技术管理员手机号（个人信息必填）；候选人账号为 NULL',
+  `real_name`      VARCHAR(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'HR/技术管理员实名（必填）；候选人账号为 NULL',
   `password_hash`  VARCHAR(100) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'bcrypt 密码哈希',
   `role`           VARCHAR(20) NOT NULL DEFAULT 'hr' COMMENT 'candidate=候选人 / hr=HR / admin=技术管理员',
   `candidate_id`   INT DEFAULT NULL COMMENT '候选人账号关联的 Candidate.ID',
   `is_active`      TINYINT NOT NULL DEFAULT 1 COMMENT '0=停用，禁止登录',
+  `restore_time`   DATETIME DEFAULT NULL COMMENT '淘汰销号账号的恢复时间；恢复后该次淘汰不再拦截登录',
   `last_login_time` DATETIME DEFAULT NULL COMMENT '最近登录时间',
   `last_login_ip`  VARCHAR(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近登录 IP',
   `Avatar`         LONGBLOB COMMENT '头像图片内容；NULL=未设置',
@@ -90,6 +96,7 @@ CREATE TABLE `User` (
   `create_time`    DATETIME DEFAULT NULL COMMENT '创建时间',
   PRIMARY KEY (`ID`),
   UNIQUE KEY `AK_Username_UK` (`username`),
+  UNIQUE KEY `UK_User_Phone` (`phone`),
   UNIQUE KEY `UK_User_Candidate` (`candidate_id`),
   CONSTRAINT `FK_User_Candidate` FOREIGN KEY (`candidate_id`) REFERENCES `Candidate` (`ID`)
       ON DELETE SET NULL ON UPDATE RESTRICT
@@ -332,3 +339,21 @@ CREATE TABLE `Operation_Log` (
   KEY `IX_Log_Action` (`Action`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='操作日志（技术管理端排查用）';
+
+/*==============================================================*/
+/* Table: Stage_Owner（投递的阶段负责人）                        */
+/*==============================================================*/
+CREATE TABLE `Stage_Owner` (
+  `ID`             INT NOT NULL AUTO_INCREMENT,
+  `application_id` INT NOT NULL COMMENT '投递编号',
+  `stage`          VARCHAR(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '关卡：ai/resume/phone/test/pro/hr/final',
+  `user_id`        INT DEFAULT NULL COMMENT '该关负责人 HR（User.ID）',
+  `update_time`    DATETIME DEFAULT NULL COMMENT '认领/变更时间',
+  PRIMARY KEY (`ID`),
+  UNIQUE KEY `UK_App_Stage` (`application_id`, `stage`),
+  KEY `FK_Stage_Owner_User` (`user_id`),
+  CONSTRAINT `FK_Stage_Owner_App` FOREIGN KEY (`application_id`) REFERENCES `Application` (`ID`)
+      ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `FK_Stage_Owner_User` FOREIGN KEY (`user_id`) REFERENCES `User` (`ID`)
+      ON DELETE SET NULL ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='投递的阶段负责人';

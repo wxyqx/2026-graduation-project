@@ -22,6 +22,12 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# 支持独立测试库：设了 ATS_DB_NAME 就把 DATABASE_URL 指到测试库（须在 import app.* 之前）
+if os.getenv("ATS_DB_NAME"):
+    os.environ["DATABASE_URL"] = (
+        f"mysql+pymysql://root:{os.getenv('ATS_DB_PASSWORD', 'ats2026')}"
+        f"@127.0.0.1:3306/{os.environ['ATS_DB_NAME']}?charset=utf8mb4"
+    )
 
 import httpx  # noqa: E402
 from sqlalchemy import select  # noqa: E402
@@ -62,7 +68,7 @@ def main() -> int:
     candidate_ids: list[int] = []
     try:
         # ---------- 准备一个 HR ----------
-        r = client.post("/api/auth/register", json={"username": hr_username, "password": "secret123"})
+        r = client.post("/api/auth/register", json={"username": hr_username, "password": "secret123", "real_name": "测试HR", "phone": "139" + tag[-8:]})
         check("注册 HR", r.status_code == 201, f"{r.status_code} {r.text[:150]}")
         hr_token = r.json()["token"]
         H = {"Authorization": f"Bearer {hr_token}"}

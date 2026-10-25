@@ -30,6 +30,8 @@ def _out(user: User) -> UserOut:
     return UserOut(
         id=user.id,
         username=user.username,
+        phone=user.phone,
+        real_name=user.real_name,
         role=user.role,
         candidate_id=user.candidate_id,
         is_active=bool(getattr(user, "is_active", 1)),

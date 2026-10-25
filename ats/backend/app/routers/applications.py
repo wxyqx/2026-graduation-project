@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from app.services import positions as positions_svc
 from app.services import notice_service
 from app.services.log_service import log_action
-from app.services import state_machine as sm
+from app.services import ownership, state_machine as sm
 from app.services.views import application_detail, application_summary
 
 router = APIRouter(prefix="/api/applications", tags=["applications"], dependencies=[Depends(get_current_hr)])
@@ -117,10 +117,12 @@ def list_applications(
             .group_by(CandidateNotice.application_id)
         ).all()
         pending_map = dict(rows)
+    owner_map = ownership.stage_owner_map_bulk(db, [a.id for a in apps])
     out = []
     for a in apps:
         item = application_summary(a)
         item["pending_notices"] = pending_map.get(a.id, 0)
+        item["stage_owner_ids"] = {st: o.user_id for st, o in owner_map.get(a.id, {}).items()}
         out.append(item)
     return out
 
@@ -172,7 +174,7 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该候选人已投递过此岗位")
     db.refresh(a)
-    return application_detail(a)
+    return application_detail(a, db)
 
 
 @router.get("/{app_id}")
@@ -201,11 +203,13 @@ def get_application(app_id: AppId, db: Session = Depends(get_db)):
 **可能出错**：
 - 404：没有这个编号
 """
-    return application_detail(_get_or_404(db, app_id))
+    return application_detail(_get_or_404(db, app_id), db)
 
 
 @router.post("/{app_id}/advance")
-def advance(app_id: AppId, body: AdvanceIn, db: Session = Depends(get_db)):
+def advance(
+    app_id: AppId, body: AdvanceIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)
+):
     """推进一关：给当前关打分（通过 / 淘汰）
 
 **干什么用**：前端行内的「通过」「淘汰」按钮点的就是它。
@@ -245,13 +249,28 @@ def advance(app_id: AppId, body: AdvanceIn, db: Session = Depends(get_db)):
             status_code=status.HTTP_409_CONFLICT,
             detail="该投递已结束（已录用/已淘汰），请先撤回再操作",
         )
+    # 编辑权限：候选人负责人能改全部关卡；阶段负责人只能改自己那一关；无主的关编辑即认领
+    try:
+        ownership.ensure_can_edit_stage(db, a, body.from_stage, user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    # 淘汰 = 流程就此结束 + 立即发淘汰通知 + 2 天后销号，影响大，必须前端弹窗确认后才执行
+    if body.result == "fail" and not body.confirm_eliminate:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="淘汰候选人会立即发送淘汰通知，并在 2 天后注销其候选人账号；请在前端确认弹窗中确认后再淘汰",
+        )
     sm.apply_result(a, body.from_stage, body.result, datetime.now())  # 真正的规则在状态机里
+    ownership.claim_stage(db, a.id, body.from_stage, user.id)  # 首次编辑本关的 HR 成为该关负责人
     # 通过电话沟通/笔试/专业面/HR面/终面时，按 HR 的模板给候选人发通知（开关关了或已发过则跳过）
     if body.result == "pass":
         notice_service.send_stage_notice(db, a, body.from_stage)
+    elif body.result == "fail" and a.overall_status == "fail":
+        # 就此淘汰：按「淘汰」模板立即发通知（候选人保留期内登录可见；超期销号拦截时也用它渲染）
+        notice_service.send_eliminate_notice(db, a, body.from_stage)
     db.commit()
     db.refresh(a)
-    return application_detail(a)
+    return application_detail(a, db)
 
 
 @router.get("/{app_id}/notices")
@@ -342,7 +361,9 @@ def discard_app_notice(
 
 
 @router.post("/{app_id}/revert")
-def revert(app_id: AppId, body: RevertIn, db: Session = Depends(get_db)):
+def revert(
+    app_id: AppId, body: RevertIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)
+):
     """撤回：反悔上一步，或退回到指定关卡
 
 **干什么用**：打错分了、或者想重新面试某一关。前端行内的「撤回」按钮。
@@ -365,6 +386,11 @@ def revert(app_id: AppId, body: RevertIn, db: Session = Depends(get_db)):
 - 404：没有这个投递
 """
     a = _get_or_404(db, app_id)
+    # 撤回也是编辑：受影响的关（指定 toStage = 该关；否则 = 当前关）需要编辑权限
+    try:
+        ownership.ensure_can_edit_stage(db, a, body.to_stage or a.current_stage, user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     try:
         sm.revert(a, body.to_stage, datetime.now())
     except ValueError as e:
@@ -372,11 +398,13 @@ def revert(app_id: AppId, body: RevertIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
     db.commit()
     db.refresh(a)
-    return application_detail(a)
+    return application_detail(a, db)
 
 
 @router.put("/{app_id}/stage-note")
-def save_stage_note(app_id: AppId, body: StageNoteIn, db: Session = Depends(get_db)):
+def save_stage_note(
+    app_id: AppId, body: StageNoteIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)
+):
     """给某一关补写「结果原因」/「面试评价」
 
 **干什么用**：在投递详情页，给某一关补一段文字记录——为什么通过 / 为什么淘汰，
@@ -415,7 +443,12 @@ def save_stage_note(app_id: AppId, body: StageNoteIn, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="该阶段尚未进行，不能填写")
     if body.evaluation and not evaluation_field:
         raise HTTPException(status_code=400, detail="该阶段没有面试评价项（仅面试环节可填）")
+    try:
+        ownership.ensure_can_edit_stage(db, a, body.stage, user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    ownership.claim_stage(db, a.id, body.stage, user.id)  # 首次编辑本关的 HR 成为该关负责人
     sm.save_stage_note(a, body.stage, body.reason, body.evaluation)
     db.commit()
     db.refresh(a)
-    return application_detail(a)
+    return application_detail(a, db)

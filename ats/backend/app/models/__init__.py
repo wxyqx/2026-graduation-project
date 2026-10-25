@@ -36,6 +36,7 @@ from app.models.candidate_notice import CandidateNotice  # noqa: E402
 from app.models.form_template import FormField, FormTemplate  # noqa: E402
 from app.models.form_submission import FormAnswer, FormSubmission  # noqa: E402
 from app.models.operation_log import OperationLog  # noqa: E402
+from app.models.stage_owner import StageOwner  # noqa: E402
 
 # 别的文件写 from app.models import User 就能拿到这些类
 __all__ = [
@@ -53,4 +54,5 @@ __all__ = [
     "FormSubmission",
     "FormAnswer",
     "OperationLog",
+    "StageOwner",
 ]

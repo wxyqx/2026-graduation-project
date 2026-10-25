@@ -119,7 +119,7 @@ async def intake(
     user_rules = get_system_prompt(db)
 
     try:
-        return await run_intake(db, payload, texts, configs, extra_map, pos_id=pos_id, user_rules=user_rules)
+        return await run_intake(db, payload, texts, configs, extra_map, pos_id=pos_id, user_rules=user_rules, owner_id=user.id)
     except ValueError as e:
         # 服务层用 ValueError 表示「指定的岗位不存在」这类输入问题，翻译成 400
         raise HTTPException(status_code=400, detail=str(e))

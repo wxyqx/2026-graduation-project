@@ -127,13 +127,14 @@ def set_portal_form_stage(db: Session, cfg: dict[str, str]) -> dict[str, str]:
     set_setting(db, admin.id, PORTAL_FORM_STAGE_KEY, text)
     return get_portal_form_stage(db)
 
-# ---------- 通过通知模板（笔试/专业面/HR面/终面通过时发给候选人）----------
+# ---------- 通过/淘汰通知模板（关卡通过时、以及被淘汰时发给候选人）----------
 
 STAGE_NOTICE_KEY = "stage_notice"
 # onboard（入职）不在 7 关流程里：触发条件是 HR 回传盖章文件，模板体系与其他关一致
-STAGE_NOTICE_STAGES = ("phone", "test", "pro", "hr", "final", "onboard")
+# eliminated（淘汰）：触发条件是投递被打 fail 且就此淘汰（overall_status 变 fail），模板体系一致
+STAGE_NOTICE_STAGES = ("phone", "test", "pro", "hr", "final", "onboard", "eliminated")
 
-# 默认模板（占位）：可用的占位符 {候选人} {岗位} {关卡}
+# 默认模板（占位）：可用的占位符 {候选人} {岗位} {关卡}；淘汰为正式版，其余 HR 可在设置页自行修改
 DEFAULT_STAGE_NOTICE = {
     "phone": {
         "enabled": True,
@@ -165,6 +166,11 @@ DEFAULT_STAGE_NOTICE = {
         "title": "【占位】入职通知",
         "body": "（通知模板占位）亲爱的 {候选人}：恭喜您正式加入「{岗位}」！盖章文件已回传，请到「文件」页查看下载，并按约定时间办理入职。",
     },
+    "eliminated": {
+        "enabled": True,
+        "title": "【应聘结果】感谢参与，期待再会",
+        "body": "亲爱的 <b>{候选人}</b>：<br><br>感谢您应聘「<b>{岗位}</b>」并参与我们的招聘流程。经综合评估，很遗憾此次未能通过<b>{关卡}</b>。这更多是岗位匹配度的考量，并非对您能力的否定，希望您早日找到更合适的舞台。<br><br>温馨提醒：本通知发出后，您的登录账号将保留 <b>2 天</b>，期间可登录查看历史消息与文件，逾期登录通道将关闭。再次感谢您的时间与信任！",
+    },
 }
 
 
@@ -190,12 +196,17 @@ def get_stage_notice(db: Session) -> dict[str, dict]:
 
 
 def set_stage_notice(db: Session, cfg: dict[str, dict]) -> dict[str, dict]:
-    """保存各关通过通知模板。只收四个关的 enabled/title/body。"""
+    """保存各关通过/淘汰通知模板。**合并式**：只更新请求里出现的关卡，没传的关保持原样。
+
+    （整份替换曾经两次把没传的关抹成默认——部分保存必须安全。清空某关内容请显式传空值。）
+    """
     admin = get_system_admin(db)
     if admin is None:
         raise ValueError("系统里还没有技术管理员账号")
-    clean = {}
+    clean = get_stage_notice(db)
     for stage in STAGE_NOTICE_STAGES:
+        if stage not in cfg:
+            continue  # 没传的关不动
         entry = cfg.get(stage) or {}
         clean[stage] = {
             "enabled": bool(entry.get("enabled", True)),
