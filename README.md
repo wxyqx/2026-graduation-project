@@ -21,6 +21,8 @@
 - **岗位「暂不招」一键隐藏**：隐藏后该岗位及其全部投递从统计 / 下拉 / 列表 / AI 筛选 / 导出中彻底排除，数据保留、改回即恢复。
 - **投递改名纠错**：纠正 AI 认错的候选人姓名，重名会先提示确认。
 - **候选人通知**：通过电话沟通/笔试/专业面/HR面/终面及入职时，按 HR 配置的**富文本模板**自动生成草稿（候选人不可见），投递详情里逐人编辑、发送前预览（所见即候选人弹窗所得），正文自动附 Offer 文件清单；候选人没有手机号（未开通候选人端账号）时不能发送，补上后可重试。
+- **邮件通知渠道**：技术端配置 SMTP（QQ/163 授权码即可）后，HR 发送通过/入职/淘汰通知时系统**异步补发一封同样内容的邮件**给有邮箱的候选人（失败不影响站内通知）；AI 录入自动从简历抽取邮箱。
+- **账号安全**：候选人默认密码登录有「请修改密码」强提示弹窗（每次登录都弹，改完消失）；HR 与候选人登录都有失败限流（10 分钟 5 次）；全库每日 03:00 自动备份，恢复有脚本演练验证。
 - **Offer 文件与回传**：录用协议 / Offer / 背景调查三类文件 HR 上传、随通知发送后候选人才可见；候选人端按类型**回传签署件**（回传前有法律效力确认弹窗），HR 端标记「已回传」并可下载。
 - **面试评价模块**：把面试记录整理成结构化评价（见 `ats/backend/app/services/interview.py`）。
 - **三档主题**：白天青碧 / 黑夜 / 护眼墨绿，同一色相家族，只换光换底不换调。
@@ -140,7 +142,8 @@ npm run dev
 
 ```bash
 cd ats/backend
-.venv\Scripts\python scriptsun_all_tests.py    # 汇总 7 套脚本结果，退出码 0=全绿
+.venv\Scripts\python scripts\run_all_tests.py     # 汇总 9 套脚本结果，退出码 0=全绿
+.venv\Scripts\python scripts\verify_backup.py     # 备份恢复演练：从最新 dump 恢复临时库并逐表校验
 ```
 
 push / PR 到 main 会自动触发 GitHub Actions 跑同一套测试（.github/workflows/tests.yml）。
@@ -182,7 +185,7 @@ cd ats/backend
 | `Operation_Log` | 操作日志（登录、账号、配置、导出、备份） |
 | `Stage_Owner` | 投递的阶段负责人（首次编辑该关的 HR 自动认领，只能编辑本关） |
 
-> 老库升级：先执行 [migrate_v3.15_three_portal.sql](step/StepO/migrate_v3.15_three_portal.sql)，再按文件名顺序执行 v3.16 的九个增量脚本（`migrate_v3.16_*.sql`：候选人通知、简历摘录字段、通知草稿、Offer 发送时间、头像、HR 手机号、HR 实名、销号恢复时间、阶段负责人）；回滚见 [rollback_v3.15_three_portal.sql](step/StepO/rollback_v3.15_three_portal.sql)。
+> 老库升级：先执行 [migrate_v3.15_three_portal.sql](step/StepO/migrate_v3.15_three_portal.sql)，再按文件名顺序执行 v3.16 的十个增量脚本（`migrate_v3.16_*.sql`：候选人通知、简历摘录字段、通知草稿、Offer 发送时间、头像、HR 手机号、HR 实名、销号恢复时间、阶段负责人、默认密码强提示）；回滚见 [rollback_v3.15_three_portal.sql](step/StepO/rollback_v3.15_three_portal.sql)。
 
 **7 阶段枚举**（`current_stage`）：`ai` AI筛选 → `resume` 简历筛选 → `phone` 电话沟通 → `test` 笔试 → `pro` 专业面 → `hr` HR面 → `final` 终面。
 **每关结果**（`result`）：`pass` 通过 / `fail` 淘汰。**全局状态**（`overall_status`）：`pending` 进行中 / `pass` 已录用 / `fail` 已淘汰。
