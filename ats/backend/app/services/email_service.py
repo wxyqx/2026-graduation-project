@@ -7,6 +7,7 @@
 import json
 import re
 import smtplib
+import socket
 import ssl
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
@@ -96,10 +97,13 @@ def _send(cfg: dict, to_email: str, to_name: str, subject: str, html: str) -> No
     msg.attach(MIMEText(html, "html", "utf-8"))
 
     port = int(cfg.get("port") or 465)
+    # smtplib 默认用 socket.getfqdn() 当 EHLO 本机名，本机 DNS 挂起时会白等 9 秒+；
+    # gethostname() 瞬时完成且同样可用，避免每封邮件慢十几秒
+    local = socket.gethostname()
     if cfg.get("use_ssl", True):
-        server = smtplib.SMTP_SSL(cfg["host"], port, timeout=15)
+        server = smtplib.SMTP_SSL(cfg["host"], port, timeout=15, local_hostname=local)
     else:
-        server = smtplib.SMTP(cfg["host"], port, timeout=15)
+        server = smtplib.SMTP(cfg["host"], port, timeout=15, local_hostname=local)
         if port == 587:  # 587 惯例走 STARTTLS；其他端口（25 / 自建 mock）明文连接
             server.starttls(context=ssl.create_default_context())
     try:

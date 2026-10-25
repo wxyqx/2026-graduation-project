@@ -10,7 +10,6 @@
 """
 import os
 import sys
-import threading
 import time
 from datetime import datetime
 
@@ -23,7 +22,6 @@ if os.getenv("ATS_DB_NAME"):
         f"@127.0.0.1:3306/{os.environ['ATS_DB_NAME']}?charset=utf8mb4"
     )
 
-import smtpd  # noqa: E402  # Python 3.11 仍有（3.12 移除）；测试库环境锁定 3.11
 
 from sqlalchemy import select  # noqa: E402
 
@@ -38,20 +36,21 @@ RECEIVED: list[dict] = []
 _check_n = [0]
 
 
-class MockSMTPServer(smtpd.SMTPServer):
-    def process_message(self, peer, mailfrom, rcpttos, data, **kwargs):
-        # decode_data=True 时 data 已是 str；两种都兼容，别在 handler 里抛异常（会断开发件连接）
-        text = data if isinstance(data, str) else data.decode("utf-8", "replace")
-        RECEIVED.append({"from": mailfrom, "to": list(rcpttos), "data": text})
+class _MockHandler:
+    """aiosmtpd 处理器：收到的邮件存 RECEIVED。标准库 smtpd 已弃用（3.12 移除）。"""
+
+    async def handle_DATA(self, server, session, envelope):
+        text = envelope.content.decode("utf-8", "replace")
+        RECEIVED.append({"from": envelope.mail_from, "to": list(envelope.rcpt_tos), "data": text})
+        return "250 Message accepted for delivery"
 
 
 def start_mock_smtp():
-    import asyncore
+    from aiosmtpd.controller import Controller
 
-    server = MockSMTPServer(("127.0.0.1", MOCK_SMTP_PORT), None, decode_data=True)
-    thread = threading.Thread(target=asyncore.loop, kwargs={"timeout": 0.1}, daemon=True)
-    thread.start()
-    return server
+    controller = Controller(_MockHandler(), hostname="127.0.0.1", port=MOCK_SMTP_PORT, ready_timeout=20)
+    controller.start()  # 自带事件循环线程
+    return controller
 
 
 def check(cond, msg, detail=""):
@@ -195,7 +194,7 @@ def main() -> int:
         print(f"== 邮件通知：通过 {_check_n[0]} 项，失败 0 项")
         return 0
     finally:
-        server.close()
+        server.stop()
         c.close()
         db.close()  # 先关会话释放行锁，清理才不会等锁超时
         # 清理测试数据
