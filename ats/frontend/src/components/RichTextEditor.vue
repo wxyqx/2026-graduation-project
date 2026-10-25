@@ -4,6 +4,7 @@
   v-model 是 HTML 字符串；写入前经 sanitize 清洗（去 script / on* 事件 / javascript: 链接）。
 -->
 <script setup>
+import DOMPurify from 'dompurify'
 import { onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -26,18 +27,16 @@ function toHtml(value) {
   return v ? v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') : ''
 }
 
+// 手写正则/DOM 清洗是经典 XSS 来源，交给 DOMPurify 按白名单清洗（与后端 nh3 同一套能力面）
+const PURIFY_CONFIG = {
+  ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 's', 'br', 'p', 'div', 'span', 'font',
+                 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'blockquote'],
+  ALLOWED_ATTR: ['style', 'href', 'target', 'size', 'color', 'face'],
+  ALLOWED_URI_REGEXP: /^(?:https?:|mailto:)/i,
+}
+
 function sanitize(html) {
-  const doc = new DOMParser().parseFromString(html || '', 'text/html')
-  doc.querySelectorAll('script, style, iframe, object, embed, link, meta').forEach((el) => el.remove())
-  doc.querySelectorAll('*').forEach((el) => {
-    for (const attr of [...el.attributes]) {
-      const name = attr.name.toLowerCase()
-      const val = attr.value.trim().toLowerCase()
-      if (name.startsWith('on')) el.removeAttribute(attr.name)
-      else if ((name === 'href' || name === 'src') && val.startsWith('javascript:')) el.removeAttribute(attr.name)
-    }
-  })
-  return doc.body.innerHTML
+  return DOMPurify.sanitize(html || '', PURIFY_CONFIG)
 }
 
 function onInput() {

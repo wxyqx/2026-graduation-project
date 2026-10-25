@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Application, Candidate, CandidateFile, CandidateNotice, Position
 from app.services import settings as settings_svc
+import nh3
 from app.services.state_machine import STAGES, STAGE_FIELDS, STAGE_LABELS
 
 # 淘汰候选人的账号保留期：淘汰后多少天内还能登录查看通知，过期销号
@@ -184,20 +185,30 @@ def list_app_notices(db: Session, application_id: int) -> list[CandidateNotice]:
     )
 
 
-# 危险标签：<script> 等（成对或自闭合都清）
-_SCRIPT_RE = re.compile(r"<\s*(script|style|iframe|object|embed|link|meta)\b[^>]*>.*?<\s*/\s*\1\s*>|<\s*(script|style|iframe|object|embed|link|meta)\b[^>]*/?>", re.I | re.S)
-# 事件属性：onclick=… / onerror=… 等
-_ON_ATTR_RE = re.compile(r'''\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)''', re.I)
-# javascript: 伪协议链接
-_JS_URL_RE = re.compile(r'(href|src)\s*=\s*(["\']?)\s*javascript:', re.I)
+# 富文本白名单：与前端 RichTextEditor 的能力一一对应（加粗/斜体/字号/对齐/链接/列表）
+_ALLOWED_TAGS = {"b", "strong", "i", "em", "u", "s", "br", "p", "div", "span",
+                 "font", "a", "ul", "ol", "li", "h1", "h2", "h3", "blockquote"}
+_ALLOWED_ATTRS = {
+    "*": {"style"},
+    "a": {"href", "target"},
+    "font": {"size", "color", "face"},
+}
 
 
 def sanitize_html(text: str) -> str:
-    """通知正文允许少量排版 HTML（加粗/字号/链接），其余危险内容清洗掉。"""
-    text = _SCRIPT_RE.sub("", text or "")
-    text = _ON_ATTR_RE.sub("", text)
-    text = _JS_URL_RE.sub(r"\1=\2", text)
-    return text.strip()
+    """通知正文允许少量排版 HTML（加粗/字号/链接），用 nh3（Rust ammonia 的绑定）按白名单清洗。
+
+    不再手写正则：手写 sanitizer 是经典 XSS 来源（属性边界、mutation XSS 等），
+    白名单重建 HTML 天然免疫这些绕过。
+    """
+    cleaned = nh3.clean(
+        text or "",
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRS,
+        url_schemes={"http", "https", "mailto"},
+        link_rel="noopener noreferrer",
+    )
+    return cleaned.strip()
 
 
 def edit_notice(db: Session, notice_id: int, title: str, body: str) -> CandidateNotice | None:
