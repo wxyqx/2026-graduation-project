@@ -277,15 +277,15 @@ def main() -> int:
             app_ids = ",".join(map(str, ids["applications"])) or "0"
             user_ids = ",".join(map(str, ids["users"])) or "0"
             pos_ids = ",".join(map(str, ids["positions"])) or "0"
-            cur.execute(f"DELETE FROM Form_Answer WHERE Submission_ID IN (SELECT ID FROM Form_Submission WHERE Candidate_ID IN ({cand_ids}) OR Application_ID IN ({app_ids}))")
-            cur.execute(f"DELETE FROM Form_Submission WHERE Candidate_ID IN ({cand_ids}) OR Application_ID IN ({app_ids})")
-            cur.execute(f"DELETE FROM Candidate_File WHERE Candidate_ID IN ({cand_ids})")
-            cur.execute(f"DELETE FROM Application WHERE Can_ID IN ({cand_ids}) OR ID IN ({app_ids})")
-            cur.execute(f"DELETE FROM User WHERE candidate_id IN ({cand_ids}) OR ID IN ({user_ids})")
-            cur.execute(f"DELETE FROM Candidate WHERE ID IN ({cand_ids})")
-            cur.execute(f"DELETE FROM Form_Field WHERE Template_ID IN ({tpl_ids})")
-            cur.execute(f"DELETE FROM Form_Template WHERE ID IN ({tpl_ids})")
-            cur.execute(f"DELETE FROM Position WHERE ID IN ({pos_ids})")
+            cur.execute(f"DELETE FROM form_answer WHERE Submission_ID IN (SELECT ID FROM form_submission WHERE Candidate_ID IN ({cand_ids}) OR Application_ID IN ({app_ids}))")
+            cur.execute(f"DELETE FROM form_submission WHERE Candidate_ID IN ({cand_ids}) OR Application_ID IN ({app_ids})")
+            cur.execute(f"DELETE FROM candidate_file WHERE Candidate_ID IN ({cand_ids})")
+            cur.execute(f"DELETE FROM application WHERE Can_ID IN ({cand_ids}) OR ID IN ({app_ids})")
+            cur.execute(f"DELETE FROM user WHERE candidate_id IN ({cand_ids}) OR ID IN ({user_ids})")
+            cur.execute(f"DELETE FROM candidate WHERE ID IN ({cand_ids})")
+            cur.execute(f"DELETE FROM form_field WHERE Template_ID IN ({tpl_ids})")
+            cur.execute(f"DELETE FROM form_template WHERE ID IN ({tpl_ids})")
+            cur.execute(f"DELETE FROM position WHERE ID IN ({pos_ids})")
             conn.commit()
             for t in ("Candidate_File", "Form_Answer", "Form_Submission", "Form_Template", "Candidate", "Application", "Position"):
                 cur.execute(f"SELECT COUNT(*) FROM `{t}`")

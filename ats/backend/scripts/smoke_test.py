@@ -298,9 +298,9 @@ def run():
     # 先把库里已有的 AI 配置全部停用，保证「无配置」分支可测；结束时恢复
     conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
     cur = conn.cursor()
-    cur.execute("SELECT ID, is_enabled FROM AI_API_Config")
+    cur.execute("SELECT ID, is_enabled FROM ai_api_config")
     created["config_prev"] = [(int(a), int(b)) for a, b in cur.fetchall()]
-    cur.execute("UPDATE AI_API_Config SET is_enabled=0")
+    cur.execute("UPDATE ai_api_config SET is_enabled=0")
     conn.commit()
     conn.close()
 
@@ -460,14 +460,14 @@ def run():
     #    用 HR 面淘汰（而非通过）来避开"停在终面等待"带来的干扰（等待也会用 update_time 计入本周）
     _, ap_cross = new_cand_app(f"跨范围_{STAMP}", p2)
     push(ap_cross, ["ai", "resume", "phone", "test", "pro", "hr"], ["pass"] * 5 + ["fail"])
-    cur.execute("UPDATE Application SET pro_time=%s WHERE ID=%s", (LAST_YEAR, ap_cross))
+    cur.execute("UPDATE application SET pro_time=%s WHERE ID=%s", (LAST_YEAR, ap_cross))
     conn.commit()
     cell2 = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "week"}).json()
     hit2 = next((x for x in cell2["people"] if x["app_id"] == ap_cross), None)
     check(hit2 is not None, "专业面在去年、HR面在本周 → 本周面试行仍计入他（旧口径不会）")
     check(hit2 and hit2["state"] == "rejected", "该人 state=rejected（HR面被淘汰）")
     # 再把 hr_time 也回拨 → 本周不计入，全部范围仍计入
-    cur.execute("UPDATE Application SET hr_time=%s WHERE ID=%s", (LAST_YEAR, ap_cross))
+    cur.execute("UPDATE application SET hr_time=%s WHERE ID=%s", (LAST_YEAR, ap_cross))
     conn.commit()
     cell3 = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "week"}).json()
     check(not any(x["app_id"] == ap_cross for x in cell3["people"]), "两关都回拨到去年 → 本周不计入")
@@ -555,11 +555,11 @@ def cleanup():
             cur.execute(f"DELETE FROM `{table}` WHERE ID IN ({','.join(map(str, ids))})")
     dele("Application", created["applications"])
     if created["configs"]:
-        cur.execute(f"DELETE FROM AI_API_Config WHERE ID IN ({','.join(map(str, created['configs']))})")
+        cur.execute(f"DELETE FROM ai_api_config WHERE ID IN ({','.join(map(str, created['configs']))})")
     for cid, enabled in created["config_prev"]:
-        cur.execute("UPDATE AI_API_Config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
+        cur.execute("UPDATE ai_api_config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
     if created["users"]:
-        cur.execute(f"DELETE FROM App_Setting WHERE User_ID IN ({','.join(map(str, created['users']))})")
+        cur.execute(f"DELETE FROM app_setting WHERE User_ID IN ({','.join(map(str, created['users']))})")
     dele("Candidate", created["candidates"])
     dele("Position", created["positions"])
     dele("User", created["users"])

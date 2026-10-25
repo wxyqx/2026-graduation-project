@@ -110,7 +110,7 @@ def main() -> int:
                                 password=os.environ.get("ATS_DB_PASSWORD", ""),
                                 database=os.environ.get("ATS_DB_NAME", "ats"))
         with conn0.cursor() as cur0:
-            cur0.execute("DELETE FROM App_Setting WHERE setting_key='email_smtp'")
+            cur0.execute("DELETE FROM app_setting WHERE setting_key='email_smtp'")
         conn0.commit()
         conn0.close()
 
@@ -266,17 +266,17 @@ def main() -> int:
                                              database=os.environ.get("ATS_DB_NAME", "ats"))
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT ID FROM Candidate WHERE name LIKE %s", (f"邮件测试%{STAMP}",))
+                cur.execute("SELECT ID FROM candidate WHERE name LIKE %s", (f"邮件测试%{STAMP}",))
                 for (cid,) in cur.fetchall():
-                    cur.execute("SELECT ID FROM Application WHERE Can_ID=%s", (cid,))
+                    cur.execute("SELECT ID FROM application WHERE Can_ID=%s", (cid,))
                     for (aid,) in cur.fetchall():
-                        cur.execute("DELETE FROM Candidate_Notice WHERE Application_ID=%s", (aid,))
-                        cur.execute("DELETE FROM Application WHERE ID=%s", (aid,))
-                    cur.execute("DELETE FROM User WHERE candidate_id=%s", (cid,))
-                    cur.execute("DELETE FROM Candidate WHERE ID=%s", (cid,))
-                cur.execute("DELETE FROM Position WHERE position_name LIKE %s", (f"邮件测试岗{STAMP}",))
-                cur.execute("DELETE FROM User WHERE username LIKE %s", (f"lc6_hr_{STAMP}",))
-                cur.execute("DELETE FROM App_Setting WHERE setting_key='email_smtp'")
+                        cur.execute("DELETE FROM candidate_notice WHERE Application_ID=%s", (aid,))
+                        cur.execute("DELETE FROM application WHERE ID=%s", (aid,))
+                    cur.execute("DELETE FROM user WHERE candidate_id=%s", (cid,))
+                    cur.execute("DELETE FROM candidate WHERE ID=%s", (cid,))
+                cur.execute("DELETE FROM position WHERE position_name LIKE %s", (f"邮件测试岗{STAMP}",))
+                cur.execute("DELETE FROM user WHERE username LIKE %s", (f"lc6_hr_{STAMP}",))
+                cur.execute("DELETE FROM app_setting WHERE setting_key='email_smtp'")
             conn.commit()
         finally:
             conn.close()

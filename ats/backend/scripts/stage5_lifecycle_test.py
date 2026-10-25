@@ -74,22 +74,22 @@ def cleanup():
         with conn.cursor() as cur:
             # 按岗位找投递（覆盖无手机号的候选人），外键顺序：通知 → 投递（级联清阶段负责人）→ 候选人/账号 → 岗位
             cur.execute(
-                "SELECT ID FROM Position WHERE position_name LIKE %s",
+                "SELECT ID FROM position WHERE position_name LIKE %s",
                 (f"生命周期测试岗{STAMP}%",),
             )
             for (pid,) in cur.fetchall():
-                cur.execute("SELECT ID, Can_ID FROM Application WHERE Pos_ID=%s", (pid,))
+                cur.execute("SELECT ID, Can_ID FROM application WHERE Pos_ID=%s", (pid,))
                 for aid, can_id in cur.fetchall():
                     cur.execute(
-                        "DELETE FROM Candidate_Notice WHERE Application_ID=%s", (aid,)
+                        "DELETE FROM candidate_notice WHERE Application_ID=%s", (aid,)
                     )
-                    cur.execute("DELETE FROM Application WHERE ID=%s", (aid,))
+                    cur.execute("DELETE FROM application WHERE ID=%s", (aid,))
                     if can_id:
-                        cur.execute("DELETE FROM User WHERE candidate_id=%s", (can_id,))
-                        cur.execute("DELETE FROM Candidate WHERE ID=%s", (can_id,))
-                cur.execute("DELETE FROM Position WHERE ID=%s", (pid,))
+                        cur.execute("DELETE FROM user WHERE candidate_id=%s", (can_id,))
+                        cur.execute("DELETE FROM candidate WHERE ID=%s", (can_id,))
+                cur.execute("DELETE FROM position WHERE ID=%s", (pid,))
             for uname in (f"lc_hr_{STAMP}", f"lc_hrb_{STAMP}"):
-                cur.execute("DELETE FROM User WHERE username=%s", (uname,))
+                cur.execute("DELETE FROM user WHERE username=%s", (uname,))
         conn.commit()
     finally:
         conn.close()

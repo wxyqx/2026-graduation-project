@@ -22,22 +22,22 @@ from sqlalchemy.orm import Session
 
 # 导出顺序：父表在前，便于人工核对
 TABLES = [
-    "Candidate",
-    "Position",
-    "User",
-    "Application",
-    "AI_API_Config",
-    "App_Setting",
-    "Candidate_File",
-    "Form_Template",
-    "Form_Field",
-    "Form_Submission",
-    "Form_Answer",
-    "Operation_Log",
-    "Email_Outbox",
+    "candidate",
+    "position",
+    "user",
+    "application",
+    "ai_api_config",
+    "app_setting",
+    "candidate_file",
+    "form_template",
+    "form_field",
+    "form_submission",
+    "form_answer",
+    "operation_log",
+    "email_outbox",
 ]
 
-FILE_TABLE = "Candidate_File"
+FILE_TABLE = "candidate_file"
 
 
 def _cell(value):

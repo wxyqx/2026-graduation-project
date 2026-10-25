@@ -147,10 +147,10 @@ def main() -> int:
             cur = conn.cursor()
             ids = [x for x in (hr_id, new_id) if x]
             if ids:
-                cur.execute(f"DELETE FROM User WHERE ID IN ({','.join(map(str, ids))})")
-            cur.execute("DELETE FROM Operation_Log")
+                cur.execute(f"DELETE FROM user WHERE ID IN ({','.join(map(str, ids))})")
+            cur.execute("DELETE FROM operation_log")
             conn.commit()
-            cur.execute("SELECT COUNT(*) FROM User")
+            cur.execute("SELECT COUNT(*) FROM user")
             print(f"  cleanup User: {cur.fetchone()[0]} rows left")
             conn.close()
         except Exception as e:

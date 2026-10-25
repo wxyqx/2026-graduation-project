@@ -81,9 +81,9 @@ def main():
         T = {"Authorization": f"Bearer {ra.json()['token']}"}
         conn0 = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
         cur0 = conn0.cursor()
-        cur0.execute("SELECT ID, is_enabled FROM AI_API_Config")
+        cur0.execute("SELECT ID, is_enabled FROM ai_api_config")
         prev_configs.extend((int(a), int(b)) for a, b in cur0.fetchall())
-        cur0.execute("UPDATE AI_API_Config SET is_enabled=0")
+        cur0.execute("UPDATE ai_api_config SET is_enabled=0")
         conn0.commit(); conn0.close()
 
         r = c.post("/api/positions", headers=H, json={"position_name": f"Java工程师_{STAMP}", "position_requirements": "3年Java"})
@@ -132,14 +132,14 @@ def main():
     finally:
         conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database=os.getenv("ATS_DB_NAME", "ats"))
         cur = conn.cursor()
-        cur.execute(f"DELETE FROM Application WHERE Pos_ID IN ({','.join(map(str, ids['positions'])) or 0})")
-        cur.execute(f"DELETE FROM User WHERE role='candidate' AND candidate_id IN (SELECT ID FROM Candidate WHERE name LIKE '%{STAMP}%')")
-        cur.execute(f"DELETE FROM Candidate WHERE name LIKE '%{STAMP}'")
-        cur.execute(f"DELETE FROM AI_API_Config WHERE ID IN ({','.join(map(str, ids['configs'])) or 0})")
+        cur.execute(f"DELETE FROM application WHERE Pos_ID IN ({','.join(map(str, ids['positions'])) or 0})")
+        cur.execute(f"DELETE FROM user WHERE role='candidate' AND candidate_id IN (SELECT ID FROM candidate WHERE name LIKE '%{STAMP}%')")
+        cur.execute(f"DELETE FROM candidate WHERE name LIKE '%{STAMP}'")
+        cur.execute(f"DELETE FROM ai_api_config WHERE ID IN ({','.join(map(str, ids['configs'])) or 0})")
         for cid, enabled in prev_configs:
-            cur.execute("UPDATE AI_API_Config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
-        cur.execute(f"DELETE FROM Position WHERE ID IN ({','.join(map(str, ids['positions'])) or 0})")
-        cur.execute(f"DELETE FROM User WHERE ID IN ({','.join(map(str, ids['users'])) or 0})")
+            cur.execute("UPDATE ai_api_config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
+        cur.execute(f"DELETE FROM position WHERE ID IN ({','.join(map(str, ids['positions'])) or 0})")
+        cur.execute(f"DELETE FROM user WHERE ID IN ({','.join(map(str, ids['users'])) or 0})")
         conn.commit()
         for t in ("Application", "Candidate", "Position", "AI_API_Config", "User"):
             cur.execute(f"SELECT COUNT(*) FROM `{t}`"); print(f"  cleanup {t}: {cur.fetchone()[0]} rows left")

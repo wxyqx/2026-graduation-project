@@ -49,47 +49,47 @@ def db():
 def cleanup(conn):
     cur = conn.cursor()
     # 演示候选人相关
-    cur.execute("SELECT ID FROM Candidate WHERE phone=%s", (PHONE,))
+    cur.execute("SELECT ID FROM candidate WHERE phone=%s", (PHONE,))
     cand_ids = [r[0] for r in cur.fetchall()]
     if cand_ids:
         ids = ",".join(map(str, cand_ids))
-        cur.execute(f"SELECT ID FROM Application WHERE Can_ID IN ({ids})")
+        cur.execute(f"SELECT ID FROM application WHERE Can_ID IN ({ids})")
         app_ids = [r[0] for r in cur.fetchall()]
         if app_ids:
             apps = ",".join(map(str, app_ids))
-            cur.execute(f"DELETE FROM Form_Answer WHERE Submission_ID IN (SELECT ID FROM Form_Submission WHERE Application_ID IN ({apps}))")
-            cur.execute(f"DELETE FROM Form_Submission WHERE Application_ID IN ({apps})")
-            cur.execute(f"DELETE FROM Application WHERE ID IN ({apps})")
-        cur.execute(f"DELETE FROM Form_Answer WHERE Submission_ID IN (SELECT ID FROM Form_Submission WHERE Candidate_ID IN ({ids}))")
-        cur.execute(f"DELETE FROM Form_Submission WHERE Candidate_ID IN ({ids})")
-        cur.execute(f"DELETE FROM Candidate_File WHERE Candidate_ID IN ({ids})")
-        cur.execute(f"DELETE FROM User WHERE candidate_id IN ({ids})")
-        cur.execute(f"DELETE FROM Candidate WHERE ID IN ({ids})")
+            cur.execute(f"DELETE FROM form_answer WHERE Submission_ID IN (SELECT ID FROM form_submission WHERE Application_ID IN ({apps}))")
+            cur.execute(f"DELETE FROM form_submission WHERE Application_ID IN ({apps})")
+            cur.execute(f"DELETE FROM application WHERE ID IN ({apps})")
+        cur.execute(f"DELETE FROM form_answer WHERE Submission_ID IN (SELECT ID FROM form_submission WHERE Candidate_ID IN ({ids}))")
+        cur.execute(f"DELETE FROM form_submission WHERE Candidate_ID IN ({ids})")
+        cur.execute(f"DELETE FROM candidate_file WHERE Candidate_ID IN ({ids})")
+        cur.execute(f"DELETE FROM user WHERE candidate_id IN ({ids})")
+        cur.execute(f"DELETE FROM candidate WHERE ID IN ({ids})")
 
     # 演示岗位与表单
-    cur.execute("SELECT ID FROM Position WHERE position_name=%s", (POSITION_NAME,))
+    cur.execute("SELECT ID FROM position WHERE position_name=%s", (POSITION_NAME,))
     pos_ids = [r[0] for r in cur.fetchall()]
     if pos_ids:
         pids = ",".join(map(str, pos_ids))
-        cur.execute(f"DELETE FROM Application WHERE Pos_ID IN ({pids})")
-        cur.execute(f"DELETE FROM Position WHERE ID IN ({pids})")
+        cur.execute(f"DELETE FROM application WHERE Pos_ID IN ({pids})")
+        cur.execute(f"DELETE FROM position WHERE ID IN ({pids})")
 
-    cur.execute("SELECT ID FROM Form_Template WHERE Name IN (%s,%s)", (PROFILE_FORM_NAME, POSITION_FORM_NAME))
+    cur.execute("SELECT ID FROM form_template WHERE Name IN (%s,%s)", (PROFILE_FORM_NAME, POSITION_FORM_NAME))
     tpl_ids = [r[0] for r in cur.fetchall()]
     if tpl_ids:
         tids = ",".join(map(str, tpl_ids))
-        cur.execute(f"DELETE FROM Form_Answer WHERE Submission_ID IN (SELECT ID FROM Form_Submission WHERE Template_ID IN ({tids}))")
-        cur.execute(f"DELETE FROM Form_Submission WHERE Template_ID IN ({tids})")
-        cur.execute(f"DELETE FROM Form_Field WHERE Template_ID IN ({tids})")
-        cur.execute(f"DELETE FROM Form_Template WHERE ID IN ({tids})")
+        cur.execute(f"DELETE FROM form_answer WHERE Submission_ID IN (SELECT ID FROM form_submission WHERE Template_ID IN ({tids}))")
+        cur.execute(f"DELETE FROM form_submission WHERE Template_ID IN ({tids})")
+        cur.execute(f"DELETE FROM form_field WHERE Template_ID IN ({tids})")
+        cur.execute(f"DELETE FROM form_template WHERE ID IN ({tids})")
 
     # 演示 HR
-    cur.execute("SELECT ID FROM User WHERE username=%s", (HR_USERNAME,))
+    cur.execute("SELECT ID FROM user WHERE username=%s", (HR_USERNAME,))
     rows = cur.fetchall()
     for (uid,) in rows:
-        cur.execute("DELETE FROM App_Setting WHERE User_ID=%s", (uid,))
-        cur.execute("DELETE FROM AI_API_Config WHERE User_ID=%s", (uid,))
-        cur.execute("DELETE FROM User WHERE ID=%s", (uid,))
+        cur.execute("DELETE FROM app_setting WHERE User_ID=%s", (uid,))
+        cur.execute("DELETE FROM ai_api_config WHERE User_ID=%s", (uid,))
+        cur.execute("DELETE FROM user WHERE ID=%s", (uid,))
     conn.commit()
 
 
@@ -206,9 +206,9 @@ def main() -> int:
 
         # 投递（临时停用 AI，稳定进入待人工筛选）
         cur = conn.cursor()
-        cur.execute("SELECT ID, is_enabled FROM AI_API_Config")
+        cur.execute("SELECT ID, is_enabled FROM ai_api_config")
         prev = [(int(a), int(b)) for a, b in cur.fetchall()]
-        cur.execute("UPDATE AI_API_Config SET is_enabled=0"); conn.commit()
+        cur.execute("UPDATE ai_api_config SET is_enabled=0"); conn.commit()
         try:
             r = c.post("/api/portal/applications", headers=C, json={"pos_id": pos["id"]})
             if r.status_code == 409:
@@ -220,7 +220,7 @@ def main() -> int:
                 print(f"已创建演示投递：#{app_id}（待人工筛选）")
         finally:
             for cid, enabled in prev:
-                cur.execute("UPDATE AI_API_Config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
+                cur.execute("UPDATE ai_api_config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
             conn.commit()
 
         # 岗位申请表

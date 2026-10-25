@@ -29,10 +29,10 @@ MYSQL_CLIENTS = [
 SOURCE_DB = "ats"
 DRILL_DB = "ats_drill"
 KEY_TABLES = [
-    "Candidate", "Position", "Application", "User", "Candidate_File",
-    "Candidate_Notice", "Form_Template", "Form_Submission", "Form_Answer",
-    "Operation_Log", "App_Setting", "AI_API_Config", "Stage_Owner",
-    "Email_Outbox",
+    "candidate", "position", "application", "user", "candidate_file",
+    "candidate_notice", "form_template", "form_submission", "form_answer",
+    "operation_log", "app_setting", "ai_api_config", "stage_owner",
+    "email_outbox",
 ]
 
 
