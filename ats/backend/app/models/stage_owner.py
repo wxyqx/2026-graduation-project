@@ -14,15 +14,15 @@ from app.models import Base
 
 
 class StageOwner(Base):
-    __tablename__ = "Stage_Owner"
+    __tablename__ = "stage_owner"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
     __table_args__ = (UniqueConstraint("application_id", "stage", name="UK_App_Stage"),)
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     application_id: Mapped[int] = mapped_column(
-        "application_id", Integer, ForeignKey("Application.ID", ondelete="CASCADE"), nullable=False
+        "application_id", Integer, ForeignKey("application.ID", ondelete="CASCADE"), nullable=False
     )
     stage: Mapped[str] = mapped_column("stage", String(20), nullable=False)  # ai / resume / … / final
     user_id: Mapped[int | None] = mapped_column(
-        "user_id", Integer, ForeignKey("User.ID", ondelete="SET NULL"), nullable=True
+        "user_id", Integer, ForeignKey("user.ID", ondelete="SET NULL"), nullable=True
     )
     update_time: Mapped[datetime | None] = mapped_column(DateTime)

@@ -30,6 +30,7 @@ from app.models.application import Application  # noqa: E402
 from app.models.candidate import Candidate  # noqa: E402
 from app.models.candidate_file import CandidateFile  # noqa: E402
 from app.models.candidate_notice import CandidateNotice  # noqa: E402
+from app.models.email_outbox import EmailOutbox  # noqa: E402
 from app.models.form_submission import FormAnswer, FormSubmission  # noqa: E402
 from app.models.form_template import FormField, FormTemplate  # noqa: E402
 from app.models.operation_log import OperationLog  # noqa: E402
@@ -54,4 +55,5 @@ __all__ = [
     "FormAnswer",
     "OperationLog",
     "StageOwner",
+    "EmailOutbox",
 ]

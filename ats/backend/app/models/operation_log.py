@@ -13,7 +13,7 @@ from app.models import Base
 
 
 class OperationLog(Base):
-    __tablename__ = "Operation_Log"
+    __tablename__ = "operation_log"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column("User_ID", Integer)

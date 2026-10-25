@@ -16,10 +16,10 @@ from app.models import Base
 
 
 class AppSetting(Base):
-    __tablename__ = "App_Setting"
+    __tablename__ = "app_setting"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column("User_ID", Integer, ForeignKey("User.ID"), nullable=False)
+    user_id: Mapped[int] = mapped_column("User_ID", Integer, ForeignKey("user.ID"), nullable=False)
     setting_key: Mapped[str] = mapped_column(String(50), nullable=False)  # 设置项名字，例：ai_prompt
     setting_value: Mapped[str | None] = mapped_column(Text)  # 设置内容
     update_time: Mapped[datetime | None] = mapped_column(DateTime)

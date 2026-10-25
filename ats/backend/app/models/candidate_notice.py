@@ -14,14 +14,14 @@ from app.models import Base
 
 
 class CandidateNotice(Base):
-    __tablename__ = "Candidate_Notice"
+    __tablename__ = "candidate_notice"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     candidate_id: Mapped[int] = mapped_column(
-        "Candidate_ID", Integer, ForeignKey("Candidate.ID", ondelete="CASCADE"), nullable=False
+        "Candidate_ID", Integer, ForeignKey("candidate.ID", ondelete="CASCADE"), nullable=False
     )
     application_id: Mapped[int | None] = mapped_column(
-        "Application_ID", Integer, ForeignKey("Application.ID", ondelete="SET NULL"), nullable=True
+        "Application_ID", Integer, ForeignKey("application.ID", ondelete="SET NULL"), nullable=True
     )
     stage: Mapped[str] = mapped_column("Stage", String(20), nullable=False)
     title: Mapped[str] = mapped_column("Title", String(100), nullable=False)

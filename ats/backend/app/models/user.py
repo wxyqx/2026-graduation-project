@@ -20,7 +20,7 @@ from app.models import Base
 
 
 class User(Base):
-    __tablename__ = "User"
+    __tablename__ = "user"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     # HR / 技术管理员用用户名登录；候选人没有用户名（NULL）。MySQL 唯一索引允许多个 NULL。
@@ -33,7 +33,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="hr")  # admin / hr / candidate
     # 候选人账号专属：指向 Candidate.ID；HR 与管理员为 NULL
     candidate_id: Mapped[int | None] = mapped_column(
-        "candidate_id", Integer, ForeignKey("Candidate.ID", ondelete="SET NULL"), nullable=True, unique=True
+        "candidate_id", Integer, ForeignKey("candidate.ID", ondelete="SET NULL"), nullable=True, unique=True
     )
     is_active: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)  # 0=停用，禁止登录
     # 1=还在用默认密码：候选人每次登录都会弹「请修改密码」强提示，改完密码清零

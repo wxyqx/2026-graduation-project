@@ -18,13 +18,13 @@ from app.models import Base
 
 
 class FormTemplate(Base):
-    __tablename__ = "Form_Template"
+    __tablename__ = "form_template"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column("Name", String(100), nullable=False)
     scope: Mapped[str] = mapped_column("Scope", String(20), nullable=False)  # profile / position
     position_id: Mapped[int | None] = mapped_column(
-        "Position_ID", Integer, ForeignKey("Position.ID", ondelete="CASCADE"), nullable=True
+        "Position_ID", Integer, ForeignKey("position.ID", ondelete="CASCADE"), nullable=True
     )
     description: Mapped[str | None] = mapped_column("Description", String(500))
     version: Mapped[int] = mapped_column("Version", Integer, nullable=False, default=1)
@@ -43,11 +43,11 @@ class FormTemplate(Base):
 
 
 class FormField(Base):
-    __tablename__ = "Form_Field"
+    __tablename__ = "form_field"  # 小写化，见本目录其他模型注释
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     template_id: Mapped[int] = mapped_column(
-        "Template_ID", Integer, ForeignKey("Form_Template.ID", ondelete="CASCADE"), nullable=False
+        "Template_ID", Integer, ForeignKey("form_template.ID", ondelete="CASCADE"), nullable=False
     )
     field_key: Mapped[str] = mapped_column("Field_Key", String(50), nullable=False)  # 英文键，同模板内唯一
     label: Mapped[str] = mapped_column("Label", String(100), nullable=False)  # 显示名

@@ -21,7 +21,7 @@ from app.models import Base
 
 
 class Application(Base):
-    __tablename__ = "Application"
+    __tablename__ = "application"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
     # 「同一个人 + 同一个岗位」只能有一条记录，数据库层面就不允许重复
     __table_args__ = (UniqueConstraint("Can_ID", "Pos_ID", name="UK_Can_Pos"),)
 
@@ -29,8 +29,8 @@ class Application(Base):
 
     # 外键：这两列的值必须是 Candidate 表 / Position 表里真实存在的编号，
     # 就像快递单上的收件人必须是真实存在的人
-    can_id: Mapped[int] = mapped_column("Can_ID", Integer, ForeignKey("Candidate.ID"), nullable=False)
-    pos_id: Mapped[int] = mapped_column("Pos_ID", Integer, ForeignKey("Position.ID"), nullable=False)
+    can_id: Mapped[int] = mapped_column("Can_ID", Integer, ForeignKey("candidate.ID"), nullable=False)
+    pos_id: Mapped[int] = mapped_column("Pos_ID", Integer, ForeignKey("position.ID"), nullable=False)
 
     # ---- 7 关的记录格子 ----
     ai_result: Mapped[str | None] = mapped_column(String(20))  # 第 1 关 AI 筛选：pass / fail

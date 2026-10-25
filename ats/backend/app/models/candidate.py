@@ -17,7 +17,7 @@ from app.models import Base
 
 
 class Candidate(Base):
-    __tablename__ = "Candidate"
+    __tablename__ = "candidate"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)  # 候选人编号
     create_time: Mapped[datetime | None] = mapped_column(DateTime)  # 录入时间
@@ -28,7 +28,7 @@ class Candidate(Base):
     # 负责人 HR：默认 = 建档 / 上传简历录入的 HR；技术管理员可单个或批量改。
     # 负责人能编辑该候选人的全部关卡；非负责人的 HR 只能编辑自己负责的关卡，其余只读
     owner_id: Mapped[int | None] = mapped_column(
-        "owner_id", Integer, ForeignKey("User.ID", ondelete="SET NULL"), nullable=True
+        "owner_id", Integer, ForeignKey("user.ID", ondelete="SET NULL"), nullable=True
     )
     # ---- HR 从简历摘录的个人信息（与候选人填写的表单答卷是两套数据，各自独立）----
     onboard_date: Mapped[str | None] = mapped_column(String(50))  # 到岗时间，可写「随时」等

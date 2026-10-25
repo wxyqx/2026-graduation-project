@@ -12,7 +12,7 @@ from app.models import Base
 
 
 class Position(Base):
-    __tablename__ = "Position"
+    __tablename__ = "position"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)  # 岗位编号
     position_name: Mapped[str | None] = mapped_column(String(100))  # 岗位名称

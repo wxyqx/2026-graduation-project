@@ -2,7 +2,7 @@
 【一键全量测试】scripts/run_all_tests.py
 
 做什么：
-  1. 用 crebas.sql 在本机 MySQL 重建独立测试库 ats_test（**完全不碰真实库 ats**）
+  1. 用 alembic 迁移链在本机 MySQL 重建独立测试库 ats_test（**完全不碰真实库 ats**）
   2. 在测试库里创建技术管理员账号（tech / admin）
   3. 用测试库起一个独立后端服务（127.0.0.1:8001）
   4. 依次跑全部 7 套自动化脚本（smoke / stage1 / portal / stage3 / stage4 / tech / mock_llm）
@@ -25,7 +25,6 @@ import httpx
 import pymysql
 
 BACKEND = Path(__file__).resolve().parents[1]
-SQL_FILE = BACKEND.parent.parent / "step" / "StepO" / "crebas.sql"
 TEST_DB = "ats_test"
 BASE = "http://127.0.0.1:8001"
 
@@ -58,45 +57,26 @@ def db_password() -> str:
 
 
 def rebuild_test_db(pw: str) -> None:
+    """重建测试库：只建空库，表结构交给 alembic upgrade head（迁移链保证依赖顺序）。"""
     conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=pw, charset="utf8mb4")
     try:
         with conn.cursor() as cur:
             cur.execute(f"DROP DATABASE IF EXISTS {TEST_DB}")
-            cur.execute(
-                f"CREATE DATABASE {TEST_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-            )
-            cur.execute(f"USE {TEST_DB}")
-            sql = SQL_FILE.read_text(encoding="utf-8")
-            # Candidate.owner_id → User 而 User.candidate_id → Candidate，存在循环外键：
-            # 两阶段建表——先剥离所有 FK 约束建全部表，再统一 ALTER 补外键
-            fks = []  # (表名, 约束SQL)
-            stmts = []
-            for raw in sql.split(";\n"):
-                raw = raw.strip()
-                if not raw:
-                    continue
-                m = re.search(r"CREATE TABLE `(\w+)`", raw)
-                if not m:
-                    stmts.append(raw)
-                    continue
-                table = m.group(1)
-                fk_blocks = re.findall(
-                    r",?\s*CONSTRAINT `\w+` FOREIGN KEY[\s\S]*?ON UPDATE RESTRICT", raw
-                )
-                if fk_blocks:
-                    for fk in fk_blocks:
-                        fks.append((table, fk.lstrip(",").strip()))
-                    raw = re.sub(r",?\s*CONSTRAINT `\w+` FOREIGN KEY[\s\S]*?ON UPDATE RESTRICT", "", raw)
-                    raw = re.sub(r",\s*\)", "\n)", raw)  # 去掉剥离后残留的尾逗号
-                stmts.append(raw)
-            for stmt in stmts:
-                cur.execute(stmt)
-            for table, fk in fks:
-                cur.execute(f"ALTER TABLE `{table}` ADD {fk}")
+            cur.execute(f"CREATE DATABASE {TEST_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
         conn.commit()
     finally:
         conn.close()
-    print(f"[1/4] 测试库 {TEST_DB} 已按 crebas.sql 重建")
+    import subprocess
+
+    env = dict(os.environ, DATABASE_URL=f"mysql+pymysql://root:{pw}@127.0.0.1:3306/{TEST_DB}?charset=utf8mb4")
+    r = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        env=env, cwd=BACKEND, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if r.returncode != 0:
+        print(r.stdout, r.stderr)
+        raise RuntimeError("alembic upgrade head 失败")
+    print(f"[1/4] 测试库 {TEST_DB} 已按 alembic 迁移链建表")
 
 
 def seed_admin(pw: str) -> None:

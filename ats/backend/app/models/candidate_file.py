@@ -16,15 +16,15 @@ from app.models import Base
 
 
 class CandidateFile(Base):
-    __tablename__ = "Candidate_File"
+    __tablename__ = "candidate_file"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     candidate_id: Mapped[int] = mapped_column(
-        "Candidate_ID", Integer, ForeignKey("Candidate.ID", ondelete="CASCADE"), nullable=False
+        "Candidate_ID", Integer, ForeignKey("candidate.ID", ondelete="CASCADE"), nullable=False
     )
     # 绑定到某次投递（岗位表专用附件）；个人简历/证书为空
     application_id: Mapped[int | None] = mapped_column(
-        "Application_ID", Integer, ForeignKey("Application.ID", ondelete="SET NULL"), nullable=True
+        "Application_ID", Integer, ForeignKey("application.ID", ondelete="SET NULL"), nullable=True
     )
     category: Mapped[str] = mapped_column(String(20), nullable=False)  # resume / certificate / portfolio / other
     original_name: Mapped[str] = mapped_column("Original_Name", String(255), nullable=False)

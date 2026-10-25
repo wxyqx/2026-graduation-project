@@ -16,7 +16,7 @@ from app.models import Base
 
 
 class AiApiConfig(Base):
-    __tablename__ = "AI_API_Config"
+    __tablename__ = "ai_api_config"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(50), nullable=False)  # 给配置起个名字，比如「GLM 免费版」
@@ -24,4 +24,4 @@ class AiApiConfig(Base):
     api_key: Mapped[str] = mapped_column(String(255), nullable=False)  # 密钥（门票）
     model: Mapped[str] = mapped_column(String(100), nullable=False)  # 模型名
     is_enabled: Mapped[int] = mapped_column(SmallInteger, default=0)  # 1 = 启用，0 = 停用（数据库里用数字存开关）
-    user_id: Mapped[int] = mapped_column("User_ID", Integer, ForeignKey("User.ID"), nullable=False)  # 属于哪个用户
+    user_id: Mapped[int] = mapped_column("User_ID", Integer, ForeignKey("user.ID"), nullable=False)  # 属于哪个用户

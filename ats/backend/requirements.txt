@@ -13,3 +13,4 @@ openpyxl==3.1.5
 httpx==0.28.1
 nh3==0.3.7
 aiosmtpd==1.4.6
+alembic==1.20.1  # 数据库迁移（crebas.sql 时代的继任者）

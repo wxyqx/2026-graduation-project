@@ -17,17 +17,17 @@ from app.models import Base
 
 
 class FormSubmission(Base):
-    __tablename__ = "Form_Submission"
+    __tablename__ = "form_submission"  # Windows MySQL 表名统一小写存储，模型直接用小写保持与 alembic/库一致
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     template_id: Mapped[int] = mapped_column(
-        "Template_ID", Integer, ForeignKey("Form_Template.ID", ondelete="RESTRICT"), nullable=False
+        "Template_ID", Integer, ForeignKey("form_template.ID", ondelete="RESTRICT"), nullable=False
     )
     candidate_id: Mapped[int] = mapped_column(
-        "Candidate_ID", Integer, ForeignKey("Candidate.ID", ondelete="CASCADE"), nullable=False
+        "Candidate_ID", Integer, ForeignKey("candidate.ID", ondelete="CASCADE"), nullable=False
     )
     application_id: Mapped[int | None] = mapped_column(
-        "Application_ID", Integer, ForeignKey("Application.ID", ondelete="CASCADE"), nullable=True
+        "Application_ID", Integer, ForeignKey("application.ID", ondelete="CASCADE"), nullable=True
     )
     template_version: Mapped[int] = mapped_column("Template_Version", Integer, nullable=False)
     status: Mapped[str] = mapped_column("Status", String(20), nullable=False, default="draft")  # draft / submitted
@@ -40,14 +40,14 @@ class FormSubmission(Base):
 
 
 class FormAnswer(Base):
-    __tablename__ = "Form_Answer"
+    __tablename__ = "form_answer"  # 小写化，见本目录其他模型注释
 
     id: Mapped[int] = mapped_column("ID", Integer, primary_key=True, autoincrement=True)
     submission_id: Mapped[int] = mapped_column(
-        "Submission_ID", Integer, ForeignKey("Form_Submission.ID", ondelete="CASCADE"), nullable=False
+        "Submission_ID", Integer, ForeignKey("form_submission.ID", ondelete="CASCADE"), nullable=False
     )
     field_id: Mapped[int] = mapped_column(
-        "Field_ID", Integer, ForeignKey("Form_Field.ID", ondelete="CASCADE"), nullable=False
+        "Field_ID", Integer, ForeignKey("form_field.ID", ondelete="CASCADE"), nullable=False
     )
     field_key: Mapped[str] = mapped_column("Field_Key", String(50), nullable=False)
     value_text: Mapped[str | None] = mapped_column("Value_Text", Text)
