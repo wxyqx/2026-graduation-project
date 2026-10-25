@@ -953,6 +953,21 @@ async function generateEvaluation() {
         </el-tab-pane>
 
         <el-tab-pane label="各关记录" name="notes" lazy>
+          <!-- 各关负责人总览：7 关归谁管一眼看全（含技术端预指派、还没走到的关） -->
+          <div class="stage-owner-strip" aria-label="各关负责人总览">
+            <div
+              v-for="st in (app.stages || [])"
+              :key="st.stage"
+              class="owner-chip"
+              :class="{ current: st.is_current }"
+            >
+              <i class="chip-dot" :style="{ background: STAGE_COLOR[st.stage] }" />
+              <span class="chip-stage">{{ st.label }}</span>
+              <span class="chip-owner" :class="{ claimed: !!stageOwnerName(st.stage) }">
+                {{ stageOwnerName(st.stage) || '未认领' }}
+              </span>
+            </div>
+          </div>
           <p class="muted tab-hint">补写各关的通过 / 淘汰原因与面试评价</p>
           <template v-if="noteStages.length">
             <!-- 滑动选关：滑块停在哪个关，下面就展示哪个关的记录 -->
@@ -1567,6 +1582,42 @@ async function generateEvaluation() {
 .stage-owner-tag {
   margin-right: var(--ats-sp-2);
   color: var(--el-text-color-regular);
+}
+
+/* ---- 各关负责人总览条：色点=关卡，灰=未认领 ---- */
+.stage-owner-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: var(--ats-sp-3);
+}
+.owner-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--el-fill-color-lighter);
+  font-size: 12px;
+}
+.owner-chip.current {
+  background: var(--el-color-primary-light-9);
+}
+.chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.chip-stage {
+  color: var(--el-text-color-secondary);
+}
+.chip-owner {
+  font-weight: var(--ats-fw-medium);
+  color: var(--el-text-color-placeholder);
+}
+.chip-owner.claimed {
+  color: var(--el-text-color-primary);
 }
 
 /* ---- 发送前预览（候选人弹窗样式）---- */
