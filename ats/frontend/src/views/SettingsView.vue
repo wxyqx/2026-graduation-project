@@ -1,343 +1,210 @@
 <!--
-  【系统设置页】
-  AI 筛选 API 管理：系统不会自己筛简历，要请外面的大模型帮忙。这里维护一组「帮谁干活」的配置。
-    表格：名称 / 接口地址 / 模型 / 是否启用（开关，可同时开多个）/ 操作
-    右上「新建配置」；行内可编辑、删除；支持多个同时启用。
-  「在哪里申请密钥」折叠帮助给新手看。
-  底部：主题说明卡（主题开关在顶栏右侧）。
+  【HR 端系统设置】
+  v3.15 起 AI 接口配置与 AI 筛选提示词已迁到技术管理端（/tech）。
+  这里可配置：候选人在哪一关之后才能看到岗位申请表 / 职业底色图。
 -->
 <script setup>
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 
-import { aiConfigApi, promptApi } from '../api'
+import { settingsApi } from '../api'
+import RichTextEditor from '../components/RichTextEditor.vue'
+import { STAGES, STAGE_LABEL } from '../constants'
 
-const list = ref([])
-const loading = ref(false)
+const stageOptions = STAGES.map((s) => ({ value: s.value, label: `从「${s.label}」起` }))
+const saving = ref(false)
+const cfg = reactive({ position: 'pro', assessment: 'pro' })
+
+// ---- 通过通知模板（笔试/专业面/HR面/终面）----
+// onboard（入职）不在 7 关 STAGE_LABEL 里，单独补名
+const NOTICE_STAGE_LABELS = { ...STAGE_LABEL, onboard: '入职' }
+const NOTICE_STAGES = ['phone', 'test', 'pro', 'hr', 'final', 'onboard']
+const noticeSaving = ref(false)
+// 声明时就初始化四关，避免接口返回前模板读到 undefined 报错
+const noticeCfg = reactive(
+  Object.fromEntries(NOTICE_STAGES.map((st) => [st, { enabled: true, title: '', body: '' }])),
+)
+
+async function loadNotice() {
+  const data = await settingsApi.getStageNotice()
+  for (const st of NOTICE_STAGES) {
+    noticeCfg[st] = {
+      enabled: data[st]?.enabled ?? true,
+      title: data[st]?.title || '',
+      body: data[st]?.body || '',
+    }
+  }
+}
+
+async function saveNotice() {
+  noticeSaving.value = true
+  try {
+    const payload = {}
+    for (const st of NOTICE_STAGES) payload[st] = { ...noticeCfg[st] }
+    const data = await settingsApi.saveStageNotice(payload)
+    for (const st of NOTICE_STAGES) {
+      noticeCfg[st] = { enabled: data[st]?.enabled ?? true, title: data[st]?.title || '', body: data[st]?.body || '' }
+    }
+    ElMessage.success('通知模板已保存')
+  } finally {
+    noticeSaving.value = false
+  }
+}
+
+const stageLabel = NOTICE_STAGE_LABELS
 
 async function load() {
-  loading.value = true
-  try {
-    list.value = await aiConfigApi.list()
-  } finally {
-    loading.value = false
-  }
-}
-onMounted(load)
-
-// ---- AI 筛选提示词 ----
-const promptRules = ref('') // 输入框里的筛选规则
-const promptDefault = ref('') // 系统默认规则（供「恢复默认」）
-const promptFormat = ref('') // 系统锁定的格式说明（只读展示）
-const promptSaved = ref(false) // 当前是否已保存过自定义规则
-const savingPrompt = ref(false)
-
-async function loadPrompt() {
-  const d = await promptApi.get()
-  promptRules.value = d.rules
-  promptDefault.value = d.default_rules
-  promptFormat.value = d.format_rules
-  promptSaved.value = d.is_custom
-}
-onMounted(loadPrompt)
-
-async function savePrompt() {
-  savingPrompt.value = true
-  try {
-    const d = await promptApi.save(promptRules.value)
-    promptRules.value = d.rules
-    promptSaved.value = d.is_custom
-    ElMessage.success('提示词已保存，下次 AI 录入立刻生效')
-  } finally {
-    savingPrompt.value = false
-  }
-}
-
-function restoreDefaultPrompt() {
-  promptRules.value = promptDefault.value
-}
-
-async function clearPrompt() {
-  savingPrompt.value = true
-  try {
-    const d = await promptApi.save('') // 传空 = 删掉自定义，回到系统默认
-    promptRules.value = d.rules
-    promptSaved.value = d.is_custom
-    ElMessage.success('已恢复为系统默认规则')
-  } finally {
-    savingPrompt.value = false
-  }
-}
-
-// ---- 新建 / 编辑弹窗 ----
-const dialogVisible = ref(false)
-const editingId = ref(null)
-const formRef = ref()
-const form = reactive({ name: '', base_url: '', api_key: '', model: '', is_enabled: false })
-const rules = {
-  name: [{ required: true, message: '请输入配置名称', trigger: 'blur' }],
-  base_url: [
-    { required: true, message: '请输入接口地址', trigger: 'blur' },
-    { type: 'url', message: '地址格式不对（要 http:// 或 https:// 开头）', trigger: 'blur' },
-  ],
-  api_key: [{ required: true, message: '请输入密钥', trigger: 'blur' }],
-  model: [{ required: true, message: '请输入模型名', trigger: 'blur' }],
-}
-const saving = ref(false)
-
-function openCreate() {
-  editingId.value = null
-  Object.assign(form, { name: '', base_url: '', api_key: '', model: '', is_enabled: false })
-  dialogVisible.value = true
-}
-function openEdit(row) {
-  editingId.value = row.id
-  Object.assign(form, {
-    name: row.name,
-    base_url: row.base_url,
-    api_key: row.api_key,
-    model: row.model,
-    is_enabled: row.is_enabled,
-  })
-  dialogVisible.value = true
+  const data = await settingsApi.getPortalFormStage()
+  cfg.position = data.position
+  cfg.assessment = data.assessment
 }
 
 async function save() {
-  await formRef.value.validate()
   saving.value = true
   try {
-    if (editingId.value === null) {
-      await aiConfigApi.create({ ...form })
-      ElMessage.success('配置已添加')
-    } else {
-      await aiConfigApi.update(editingId.value, { ...form })
-      ElMessage.success('配置已更新')
-    }
-    dialogVisible.value = false
-    await load()
+    const data = await settingsApi.savePortalFormStage({ ...cfg })
+    cfg.position = data.position
+    cfg.assessment = data.assessment
+    ElMessage.success('已保存，候选人端即时生效')
   } finally {
     saving.value = false
   }
 }
 
-async function toggle(row) {
-  if (row.is_enabled) await aiConfigApi.disable(row.id)
-  else await aiConfigApi.enable(row.id)
-  ElMessage.success(row.is_enabled ? '已停用' : '已启用')
-  await load()
-}
-
-async function remove(row) {
-  try {
-    await ElMessageBox.confirm(`确定删除配置「${row.name}」？`, '删除配置', { type: 'warning' })
-  } catch {
-    return
-  }
-  await aiConfigApi.remove(row.id)
-  ElMessage.success('已删除')
-  await load()
-}
-
-const helpVisible = ref(false)
+onMounted(() => {
+  load()
+  loadNotice()
+})
 </script>
 
 <template>
   <div>
     <div class="page-header">
       <h2>系统设置</h2>
-      <el-button type="primary" @click="openCreate">
-        <el-icon><Plus /></el-icon>&nbsp;新建配置
-      </el-button>
     </div>
 
-    <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>AI 筛选 API 管理</span>
-          <el-button link type="primary" size="small" @click="helpVisible = !helpVisible">
-            {{ helpVisible ? '收起帮助' : '哪里申请密钥？' }}
-          </el-button>
-        </div>
-      </template>
+    <el-alert
+      type="info"
+      show-icon
+      :closable="false"
+      title="AI 配置与筛选提示词已迁移到技术管理端"
+      description="HR 端不再提供 AI 配置入口。需要更换模型、密钥或调整筛选规则时，请联系公司技术人员。"
+      class="tip"
+    />
 
-      <el-collapse-transition>
-        <div v-if="helpVisible" class="help">
-          <p>支持所有「OpenAI 兼容」的大模型服务，任选一家注册并创建 API Key：</p>
-          <table>
-            <tr><th>服务</th><th>接口地址（base_url）</th><th>模型名示例</th></tr>
-            <tr><td>智谱 GLM</td><td>https://open.bigmodel.cn/api/paas/v4</td><td>glm-4-flash（免费）</td></tr>
-            <tr><td>通义千问</td><td>https://dashscope.aliyuncs.com/compatible-mode/v1</td><td>qwen-turbo</td></tr>
-            <tr><td>DeepSeek</td><td>https://api.deepseek.com/v1</td><td>deepseek-chat</td></tr>
-          </table>
-          <p class="muted">
-            base_url 填到 /v4 或 /v1 即可，系统自动补 /chat/completions。可加多个并同时启用，
-            AI 录入时在启用配置间轮流使用，某家出错会自动换另一家重试。
-          </p>
-        </div>
-      </el-collapse-transition>
-
-      <el-table :data="list" v-loading="loading" empty-text="还没有 AI 配置，点右上角新建">
-        <el-table-column prop="name" label="名称" width="160" />
-        <el-table-column prop="base_url" label="接口地址" min-width="240" show-overflow-tooltip />
-        <el-table-column prop="model" label="模型" width="160" />
-        <el-table-column label="启用" width="100" align="center">
-          <template #default="{ row }">
-            <el-switch :model-value="row.is_enabled" :aria-label="`启用配置：${row.name}`" @change="toggle(row)" />
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="130" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <!-- AI 筛选提示词 -->
-    <el-card shadow="never" style="margin-top: 14px">
-      <template #header>
-        <div class="card-header">
-          <span>AI 筛选提示词</span>
-          <el-tag v-if="promptSaved" type="success" size="small">已自定义</el-tag>
-          <el-tag v-else type="info" size="small">系统默认</el-tag>
-        </div>
-      </template>
-
-      <p class="muted" style="margin-top: 0">
-        这里写的是<b>筛选规则</b>——AI 判断简历通过与否时遵循的标准（岗位要求之外的额外标准）。
-        它会用在每次「AI 录入简历」里。
+    <section class="ats-panel">
+      <h3 class="title">候选人表单可见阶段</h3>
+      <p class="muted">
+        控制候选人在招聘流程走到哪一关后，才能看到并填写岗位申请表、职业底色图。
+        个人资料表不受影响，投递前始终要填；被淘汰的候选人停在某一关，按所在关判断。
+        保存后候选人端即时生效。
       </p>
-      <el-input
-        v-model="promptRules"
-        type="textarea"
-        aria-label="AI 筛选提示词"
-        :rows="7"
-        maxlength="8000"
-        show-word-limit
-        placeholder="例：&#10;1. 只要 985/211 院校毕业；&#10;2. 必须有医疗行业项目经验；&#10;3. 不接收外包背景；&#10;4. 工作年限不足 3 年的判为不通过。"
-      />
+      <div class="stage-row">
+        <span class="stage-label">岗位申请表</span>
+        <el-select v-model="cfg.position" style="width: 200px">
+          <el-option v-for="o in stageOptions" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
+      </div>
+      <div class="stage-row">
+        <span class="stage-label">职业底色图</span>
+        <el-select v-model="cfg.assessment" style="width: 200px">
+          <el-option v-for="o in stageOptions" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
+      </div>
+      <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+    </section>
 
-      <div class="format-box">
-        <div class="format-title">回答格式（系统锁定，不可修改）</div>
-        <pre>{{ promptFormat }}</pre>
-        <div class="muted" style="font-size: 12px">
-          这段是程序读取 AI 结果的依据，格式一乱结果就读不出来，所以固定不可改。
+    <section class="ats-panel" style="margin-top: 16px">
+      <h3 class="title">通过通知模板</h3>
+      <p class="muted">
+        候选人通过笔试 / 专业面 / HR 面 / 终面时，按这里的模板给他发一条通知，候选人下次登录会弹窗展示；
+        关掉开关则不发。占位符：<code>{候选人}</code> <code>{岗位}</code> <code>{关卡}</code>，发送时自动替换。
+      </p>
+      <div v-for="st in NOTICE_STAGES" :key="st" class="notice-block">
+        <div class="notice-head-row">
+          <span class="notice-stage-name">{{ stageLabel[st] }}</span>
+          <el-switch v-model="noticeCfg[st].enabled" active-text="通过时发送" />
         </div>
+        <el-input v-model="noticeCfg[st].title" maxlength="100" placeholder="通知标题" style="margin-top: 8px" />
+        <RichTextEditor
+          v-model="noticeCfg[st].body"
+          placeholder="通知正文：支持加粗、字号、对齐、链接等排版；占位符 {候选人} {岗位} {关卡} 发送时替换"
+          :min-height="110"
+          style="margin-top: 8px"
+        />
       </div>
+      <el-button type="primary" :loading="noticeSaving" @click="saveNotice">保存通知模板</el-button>
+    </section>
 
-      <div class="prompt-actions">
-        <el-button type="primary" :loading="savingPrompt" @click="savePrompt">保存</el-button>
-        <el-button @click="restoreDefaultPrompt">填入默认规则</el-button>
-        <el-button :disabled="!promptSaved" @click="clearPrompt">恢复系统默认</el-button>
-      </div>
-    </el-card>
+    <section class="ats-panel" style="margin-top: 16px">
+      <h3 class="title">技术管理端</h3>
+      <p class="muted">
+        技术管理端负责：账号与权限、AI 接口配置与提示词、操作日志、数据备份与运行概览。
+        技术管理员使用独立入口登录，不占用 HR 账号，也不能浏览招聘业务数据。
+      </p>
+      <router-link to="/tech/login" class="tech-link">打开技术管理端登录页</router-link>
+    </section>
 
-    <el-card shadow="never" style="margin-top: 14px">
-      <template #header>主题偏好</template>
-      <p class="muted">主题切换在页面右上角（白天 / 黑夜 / 护眼），选择自动保存在本浏览器，刷新后保持。</p>
-    </el-card>
-
-    <!-- 新建/编辑弹窗 -->
-    <el-dialog v-model="dialogVisible" class="ats-dialog-narrow" :title="editingId === null ? '新建 AI 配置' : '编辑 AI 配置'" destroy-on-close>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
-        <el-form-item label="配置名称" prop="name">
-          <el-input
-            v-model="form.name"
-            name="config-name"
-            autocomplete="off"
-            placeholder="例：GLM免费版（自己认得就行）"
-            maxlength="50"
-          />
-        </el-form-item>
-        <el-form-item label="接口地址" prop="base_url">
-          <el-input
-            v-model="form.base_url"
-            name="config-base-url"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="例：https://open.bigmodel.cn/api/paas/v4"
-            maxlength="255"
-          />
-        </el-form-item>
-        <el-form-item label="密钥" prop="api_key">
-          <el-input
-            v-model="form.api_key"
-            name="config-api-key"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="去 AI 平台的 API Keys 页面申请"
-            show-password
-            maxlength="255"
-          />
-        </el-form-item>
-        <el-form-item label="模型名" prop="model">
-          <el-input
-            v-model="form.model"
-            name="config-model"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="例：glm-4-flash（填 /v4 系列模型时照抄平台文档）"
-            maxlength="100"
-          />
-        </el-form-item>
-        <el-form-item label="立刻启用">
-          <el-switch v-model="form.is_enabled" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
-      </template>
-    </el-dialog>
+    <section class="ats-panel" style="margin-top: 16px">
+      <h3 class="title">主题与界面</h3>
+      <p class="muted">
+        三档主题（白天青碧 / 黑夜 / 护眼墨绿）在顶栏右侧切换，选择保存在本浏览器。
+        周报阶段文案的改写仍在「汇总导出」页内，不需要来本页。
+      </p>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.help {
-  background: var(--el-fill-color-lighter);
-  border-radius: 8px;
-  padding: 4px 16px;
-  margin-bottom: 14px;
-  font-size: 13px;
+.tip {
+  margin-bottom: var(--ats-sp-4);
 }
-.help table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 8px 0;
+.title {
+  margin: 0 0 var(--ats-sp-2);
+  font-size: var(--ats-fs-card);
+  font-weight: var(--ats-fw-medium);
 }
-.help td,
-.help th {
-  border: 1px solid var(--el-border-color-lighter);
-  padding: 6px 10px;
-  text-align: left;
+p.muted {
+  margin-top: 0;
+  line-height: 1.7;
 }
-/* 锁定的回答格式说明：灰底只读，让人一看就知道"这部分不用管、也改不了" */
-.format-box {
-  margin-top: 12px;
-  background: var(--el-fill-color-light);
-  border: 1px dashed var(--el-border-color);
-  border-radius: 6px;
-  padding: 10px 14px;
-}
-.format-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-regular);
-  margin-bottom: 6px;
-}
-.format-box pre {
-  margin: 0 0 6px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.8;
-  color: var(--el-text-color-secondary);
-}
-.prompt-actions {
-  margin-top: 14px;
+.stage-row {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: var(--ats-sp-3);
+  margin-bottom: var(--ats-sp-3);
+}
+.stage-label {
+  width: 90px;
+  color: var(--el-text-color-regular);
+}
+.tech-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: var(--ats-radius-sm);
+  color: var(--el-color-primary);
+  text-decoration: none;
+  font-size: var(--ats-fs-note);
+}
+.tech-link:hover {
+  background: var(--el-color-primary-light-9);
+}
+
+.notice-block {
+  padding: var(--ats-sp-3);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--ats-radius);
+  margin-bottom: var(--ats-sp-3);
+}
+.notice-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.notice-stage-name {
+  font-weight: var(--ats-fw-medium);
+  color: var(--el-text-color-primary);
 }
 </style>

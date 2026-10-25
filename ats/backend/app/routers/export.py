@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_hr
 from app.models import User
 from app.schemas.export import ExportIn
 from app.services import export as svc
@@ -22,7 +22,7 @@ from app.services import settings as settings_svc
 from app.services import summary
 from app.services.state_machine import STAGES, STATUSES
 
-router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(get_current_hr)])
 
 
 @router.get("/fields")
@@ -51,7 +51,7 @@ def export_fields():
 
 
 @router.post("")
-def export(body: ExportIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def export(body: ExportIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
     """导出投递记录为 Excel / csv 文件
 
 **干什么用**：把系统里的投递记录导成表格，发给领导、存档、或用 Excel 做进一步分析。

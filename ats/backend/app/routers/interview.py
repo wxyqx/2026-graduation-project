@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_hr
 from app.models import AiApiConfig, User
 from app.schemas.interview import EvaluateIn, EvaluateOut
 from app.services import interview, llm
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/interview", tags=["interview"])
 
 
 @router.post("/evaluate", response_model=EvaluateOut)
-async def evaluate(body: EvaluateIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def evaluate(body: EvaluateIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
     """面试评价：贴逐字稿 → AI 按固定模板写面评
 
 **干什么用**：面试完把对话逐字稿（转写文本）整段贴进来，AI 按固定的 7 项模板
@@ -51,14 +51,12 @@ async def evaluate(body: EvaluateIn, db: Session = Depends(get_db), user: User =
     if len(text) < interview.MIN_TRANSCRIPT_CHARS:
         raise HTTPException(status_code=400, detail=f"逐字稿太短了，至少要 {interview.MIN_TRANSCRIPT_CHARS} 个字")
 
-    # 找出「我的」并且「已启用」的 AI 配置，一个都没有就没法干活
+    # 找出所有已启用的 AI 配置（系统级，技术管理员维护）
     configs = db.scalars(
-        select(AiApiConfig)
-        .where(AiApiConfig.user_id == user.id, AiApiConfig.is_enabled == 1)
-        .order_by(AiApiConfig.id)
+        select(AiApiConfig).where(AiApiConfig.is_enabled == 1).order_by(AiApiConfig.id)
     ).all()
     if not configs:
-        raise HTTPException(status_code=400, detail="没有已启用的 AI 配置，请先在系统设置中添加并启用")
+        raise HTTPException(status_code=400, detail="没有已启用的 AI 配置，请联系技术管理员")
 
     try:
         return await interview.evaluate(configs, text)

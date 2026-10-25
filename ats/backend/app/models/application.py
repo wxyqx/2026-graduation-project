@@ -66,6 +66,8 @@ class Application(Base):
     # ---- 整体进度 ----
     current_stage: Mapped[str | None] = mapped_column(String(20))  # 当前在第几关
     overall_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # 整体状态
+    # 来源：admin=HR手动建 / ai_intake=管理端AI录入 / portal=候选人自己投的
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="admin")
     create_time: Mapped[datetime | None] = mapped_column(DateTime)  # 投递创建时间
     update_time: Mapped[datetime | None] = mapped_column(DateTime)  # 最后一次改动时间
 

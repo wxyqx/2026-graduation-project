@@ -2,6 +2,8 @@
 
 Field(description=...) 里的中文会显示在 /docs 网页每个格子旁边；
 json_schema_extra 里的 examples 会作为网页上「填写示例」自动出现，点 Try it out 就能直接用。
+
+v3.15：用户多了 role（hr / admin / candidate），候选人账号没有 username。
 """
 from datetime import datetime
 
@@ -51,13 +53,16 @@ class UserOut(BaseModel):
     """回给前端的用户信息。Out 结尾 = 「出去的数据」。注意：绝对不含密码哈希。"""
 
     id: int = Field(description="用户编号，数据库自动分配")
-    username: str = Field(description="用户名")
+    username: str | None = Field(default=None, description="用户名；候选人账号没有用户名（null）")
+    role: str = Field(description="角色：hr=HR / admin=技术管理员 / candidate=候选人")
+    candidate_id: int | None = Field(default=None, description="候选人账号关联的候选人编号；HR/管理员为 null")
+    is_active: bool = Field(default=True, description="账号是否启用")
     create_time: datetime | None = Field(description="注册时间")
 
 
 class TokenOut(BaseModel):
     """登录 / 注册成功后回给前端的东西：一张通行证 + 用户信息。"""
 
-    token: str = Field(description="通行证（JWT）。复制这一串去点右上角 Authorize，之后所有接口就都能用了。7 天有效")
+    token: str = Field(description="通行证（JWT）。HR 7 天、候选人 30 天有效")
     token_type: str = Field(default="bearer", description="通行证类型，固定 bearer（意思是「谁拿着谁就是」）")
     user: UserOut = Field(description="你是谁")

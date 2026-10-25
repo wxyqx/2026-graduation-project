@@ -21,11 +21,13 @@ class MockLLM(BaseHTTPRequestHandler):
 
         name_m = re.search(r"姓名[:：]\s*(\S+)", resume)
         name = name_m.group(1) if name_m else ""
+        phone_m = re.search(r"手机号[:：]\s*(1[3-9]\d{9})", resume)
+        phone = phone_m.group(1) if phone_m else ""
         pos_ids = [int(x) for x in re.findall(r'"id":\s*(\d+)', pos_text)]
 
         # 简历里带这些标记 → 模拟不同情况，方便联调
         if "NOPOS" in resume:
-            out = {"name": name, "position_id": None, "result": "", "reason": "简历方向与在招岗位不相关"}
+            out = {"name": name, "phone": phone, "position_id": None, "result": "fail", "reason": "简历方向与在招岗位不相关"}
         else:
             # 如果岗位带 extra（附加条件），模拟 AI「因不满足附加条件而判 fail」，便于验证功能
             has_extra = '"extra"' in pos_text
@@ -39,7 +41,7 @@ class MockLLM(BaseHTTPRequestHandler):
                 result, reason = "通过", "【mock】中文化回答，用于验证系统能读懂"
             else:
                 result, reason = "pass", "【mock】简历与岗位要求基本吻合，建议进入下一环节"
-            out = {"name": name, "position_id": pos_ids[0] if pos_ids else None, "result": result, "reason": reason}
+            out = {"name": name, "phone": phone, "position_id": pos_ids[0] if pos_ids else None, "result": result, "reason": reason}
         content = "```json\n" + json.dumps(out, ensure_ascii=False) + "\n```"
         resp = json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
         self.send_response(200)

@@ -12,6 +12,7 @@ import App from './App.vue'
 import router from './router'
 import { initTheme } from './theme'
 import './styles/theme.css'
+import './styles/portal.css'
 
 initTheme() // 先套主题，避免页面闪一下白
 

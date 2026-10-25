@@ -14,6 +14,9 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { applicationApi, candidateApi, positionApi, statsApi } from '../api'
 import { RESULT_LABEL, STAGES, STAGE_COLOR, STAGE_LABEL, STATUSES, STATUS_LABEL, STATUS_TYPE } from '../constants'
+
+// 终面通关（overall_status=pass）= 已入职，是流程之外的展示态，不是第 8 关
+const ONBOARD = { value: 'onboard', label: '已入职' }
 import { fmtTime } from '../utils/format'
 import AIIntakeDialog from './AIIntakeDialog.vue'
 import StageTag from '../components/StageTag.vue'
@@ -21,6 +24,13 @@ import StageTag from '../components/StageTag.vue'
 const router = useRouter()
 const route = useRoute()
 const refreshStats = inject('refreshStats')
+
+const SOURCE_LABEL = { admin: 'HR 手动', ai_intake: 'AI 录入', portal: '候选人投递' }
+const SOURCE_OPTIONS = [
+  { value: 'admin', label: 'HR 手动' },
+  { value: 'ai_intake', label: 'AI 录入' },
+  { value: 'portal', label: '候选人投递' },
+]
 
 // 上次用的筛选条件存这里（浏览器会话级）：从别的页面点回「投递列表」时自动恢复
 const FILTER_KEY = 'ats_app_filters'
@@ -40,6 +50,7 @@ const filters = reactive({
   stage: route.query.stage || saved.stage || '',
   status: route.query.status || saved.status || '',
   pos_id: route.query.pos_id ? Number(route.query.pos_id) : saved.pos_id || '',
+  source: route.query.source || saved.source || '',
 })
 const list = ref([])
 const loading = ref(false)
@@ -49,9 +60,14 @@ async function load() {
   loading.value = true
   try {
     const params = {}
-    if (filters.stage) params.stage = filters.stage
-    if (filters.status) params.status = filters.status
+    if (filters.stage === 'onboard') {
+      params.status = 'pass' // 已入职 = 终面通关，按整体状态查
+    } else {
+      if (filters.stage) params.stage = filters.stage
+      if (filters.status) params.status = filters.status
+    }
     if (filters.pos_id) params.pos_id = filters.pos_id
+    if (filters.source) params.source = filters.source
     list.value = await applicationApi.list(params)
   } finally {
     loading.value = false
@@ -70,8 +86,14 @@ watch(
     if (filters.stage) query.stage = filters.stage
     if (filters.status) query.status = filters.status
     if (filters.pos_id) query.pos_id = String(filters.pos_id)
+    if (filters.source) query.source = filters.source
     router.replace({ query })
-    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ stage: filters.stage, status: filters.status, pos_id: filters.pos_id }))
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({
+      stage: filters.stage,
+      status: filters.status,
+      pos_id: filters.pos_id,
+      source: filters.source,
+    }))
     load()
   },
   // immediate: 进入页面时也执行一次，保证「网址带参数进来」的筛选也会被记下来
@@ -94,9 +116,15 @@ watch(
       stage: route.query.stage || s.stage || '',
       status: route.query.status || s.status || '',
       pos_id: route.query.pos_id ? Number(route.query.pos_id) : s.pos_id || '',
+      source: route.query.source || s.source || '',
     }
     // 只有跟当前不同才赋值，避免和上面那个 watch 打架、死循环
-    if (next.stage !== filters.stage || next.status !== filters.status || next.pos_id !== filters.pos_id) {
+    if (
+      next.stage !== filters.stage ||
+      next.status !== filters.status ||
+      next.pos_id !== filters.pos_id ||
+      next.source !== filters.source
+    ) {
       Object.assign(filters, next)
     }
   },
@@ -105,7 +133,7 @@ watch(
 function resetFilters() {
   // 清空筛选：网址参数和浏览器里存的记录一起清掉，免得点回来又恢复
   sessionStorage.removeItem(FILTER_KEY)
-  Object.assign(filters, { stage: '', status: '', pos_id: '' })
+  Object.assign(filters, { stage: '', status: '', pos_id: '', source: '' })
   // watch 会自动清空网址参数并重新查询，这里不用再手动 load
 }
 
@@ -166,22 +194,26 @@ async function searchCandidates(keyword) {
 }
 
 // 现场新建候选人（小表单，建好后自动选中）
-const newCandidate = reactive({ show: false, name: '', remark: '' })
+const newCandidate = reactive({ show: false, name: '', phone: '', remark: '' })
 async function addCandidate() {
   if (!newCandidate.name.trim()) {
     ElMessage.warning('请输入候选人姓名')
     return
   }
-  const c = await candidateApi.create({ name: newCandidate.name.trim(), remark: newCandidate.remark || null })
+  const c = await candidateApi.create({
+    name: newCandidate.name.trim(),
+    phone: newCandidate.phone.trim() || '',
+    remark: newCandidate.remark || null,
+  })
   candidateOptions.value = [c, ...candidateOptions.value]
   createForm.can_id = c.id
-  Object.assign(newCandidate, { show: false, name: '', remark: '' })
+  Object.assign(newCandidate, { show: false, name: '', phone: '', remark: '' })
   ElMessage.success(`候选人「${c.name}」已创建`)
 }
 
 function openCreate() {
   Object.assign(createForm, { can_id: null, pos_id: null })
-  Object.assign(newCandidate, { show: false, name: '', remark: '' })
+  Object.assign(newCandidate, { show: false, name: '', phone: '', remark: '' })
   searchCandidates('')
   createVisible.value = true
 }
@@ -201,15 +233,17 @@ async function submitCreate() {
   }
 }
 
-const hasFilter = computed(() => filters.stage || filters.status || filters.pos_id)
+const hasFilter = computed(() => filters.stage || filters.status || filters.pos_id || filters.source)
 
 // ---- 阶段轨：7 关横排，各显示"当前卡在这一关的人数"，点一下即筛选 ----
 // 数据来自 /stats/overview 的 stage_counts（只统计进行中的），与顶部指标同源
 const stageCounts = ref({})
+const onboardCount = ref(0)
 async function loadStageCounts() {
   try {
     const d = await statsApi.overview()
     stageCounts.value = Object.fromEntries((d.stage_counts || []).map((x) => [x.stage, x.count]))
+    onboardCount.value = d.pass_count || 0
   } catch {
     /* 拦截器已提示 */
   }
@@ -270,6 +304,17 @@ function onIntakeClosed() {
         <span class="pipe-name">{{ s.label }}</span>
         <span class="pipe-count">{{ stageCounts[s.value] || 0 }}</span>
       </button>
+      <!-- 已入职：终面通关的人，流程之外的第 8 格 -->
+      <button
+        type="button"
+        class="pipe-stop"
+        :class="{ 'is-active': filters.stage === 'onboard', 'is-empty': !onboardCount }"
+        @click="toggleStage('onboard')"
+      >
+        <i class="pipe-bar" style="background: var(--el-color-success)" />
+        <span class="pipe-name">{{ ONBOARD.label }}</span>
+        <span class="pipe-count">{{ onboardCount }}</span>
+      </button>
     </div>
 
     <!-- 工具条：状态 / 岗位 / 清空（不再是卡片，减少层级） -->
@@ -295,6 +340,16 @@ function onIntakeClosed() {
       >
         <el-option v-for="p in positions" :key="p.id" :label="p.position_name" :value="p.id" />
       </el-select>
+      <el-select
+        v-model="filters.source"
+        aria-label="按来源筛选"
+        placeholder="全部来源"
+        clearable
+        size="small"
+        style="width: 130px"
+      >
+        <el-option v-for="s in SOURCE_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
+      </el-select>
       <el-button v-if="hasFilter" link size="small" @click="resetFilters">清空筛选</el-button>
       <span class="toolbar-count muted">共 {{ list.length }} 条</span>
     </div>
@@ -311,9 +366,35 @@ function onIntakeClosed() {
         </template>
       </el-table-column>
       <el-table-column prop="position_name" label="岗位" min-width="160" show-overflow-tooltip />
+      <el-table-column label="来源" width="110">
+        <template #default="{ row }">
+          <el-tag
+            size="small"
+            effect="plain"
+            :type="row.source === 'portal' ? 'success' : row.source === 'ai_intake' ? 'warning' : 'info'"
+          >
+            {{ SOURCE_LABEL[row.source] || row.source || 'HR 手动' }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="当前阶段" width="132">
         <template #default="{ row }">
-          <StageTag :stage="row.current_stage" />
+          <span v-if="row.overall_status === 'pass'" class="stage-plain onboard">
+            <i class="pipe-bar" style="background: var(--el-color-success)" />
+            {{ ONBOARD.label }}
+          </span>
+          <StageTag v-else :stage="row.current_stage" />
+          <el-tooltip v-if="row.pending_notices" :content="`有 ${row.pending_notices} 条通知待发送，点击进入预览发送`" placement="top">
+            <el-tag
+              size="small"
+              type="warning"
+              effect="light"
+              class="notice-badge"
+              @click.stop="router.push({ name: 'application-detail', params: { id: row.id }, query: { tab: 'notices' } })"
+            >
+              通知×{{ row.pending_notices }}
+            </el-tag>
+          </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="96">
@@ -373,7 +454,15 @@ function onIntakeClosed() {
               name="candidate-name"
               autocomplete="off"
               placeholder="姓名"
-              style="width: 150px"
+              style="width: 120px"
+            />
+            <el-input
+              v-model="newCandidate.phone"
+              name="candidate-phone"
+              autocomplete="off"
+              placeholder="手机号（填了才能登录）"
+              maxlength="11"
+              style="width: 180px"
             />
             <el-input
               v-model="newCandidate.remark"
@@ -403,6 +492,15 @@ function onIntakeClosed() {
 </template>
 
 <style scoped>
+/* 已入职：与阶段色标同构的展示（绿色条 = 流程走完） */
+.stage-plain.onboard {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: var(--ats-fs-body);
+  color: var(--el-text-color-regular);
+}
 /* ---- 阶段轨：本页的主视觉，把"7 关管线"直接做成筛选器 ---- */
 .pipeline {
   display: flex;
@@ -497,5 +595,10 @@ function onIntakeClosed() {
   outline: 2px solid var(--el-color-primary);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+.notice-badge {
+  margin-left: 6px;
+  cursor: pointer;
 }
 </style>

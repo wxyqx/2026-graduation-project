@@ -36,3 +36,7 @@ Desktop.ini
 # ===== ZCode 工作区配置与素材（含候选人隐私，不入库） =====
 .zcode/
 .zcodeignore
+
+# ===== 数据库备份 / 权限修复临时产物（含真实数据，不入库） =====
+backup_before_*.sql
+.acl-recovery/

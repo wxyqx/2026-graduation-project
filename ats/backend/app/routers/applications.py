@@ -13,19 +13,23 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
-from app.models import Application, Candidate, Position
+from app.core.deps import get_current_hr
+from app.models import Application, Candidate, CandidateNotice, Position, User
 from app.schemas.application import AdvanceIn, ApplicationCreate, RevertIn, StageNoteIn
+from pydantic import BaseModel, Field
+
 from app.services import positions as positions_svc
+from app.services import notice_service
+from app.services.log_service import log_action
 from app.services import state_machine as sm
 from app.services.views import application_detail, application_summary
 
-router = APIRouter(prefix="/api/applications", tags=["applications"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/api/applications", tags=["applications"], dependencies=[Depends(get_current_hr)])
 
 AppId = Annotated[int, Path(description="投递记录编号（列表里每一行的 id）")]
 
@@ -51,6 +55,10 @@ def list_applications(
     ),  # 网址里叫 status，但 status 这个名字已经被上面 import 的模块占了，所以 Python 里叫 status_
     pos_id: int | None = Query(default=None, description="只看这个岗位的（岗位编号）"),
     can_id: int | None = Query(default=None, description="只看这个候选人的（候选人编号）。用于候选人详情里列他投了哪些岗位"),
+    source: str | None = Query(
+        default=None,
+        description="按来源筛选：admin=HR手动 / ai_intake=AI录入 / portal=候选人自主投递",
+    ),
     db: Session = Depends(get_db),
 ):
     """投递列表（可按关卡 / 状态 / 岗位筛选）
@@ -76,13 +84,15 @@ def list_applications(
 ```
 
 **可能出错**：
-- 400：`stage` 或 `status` 传了不在可选值里的东西
+- 400：`stage` / `status` / `source` 传了不在可选值里的东西
 """
     # 先把乱传的值挡在门外（枚举值以数据字典为准）
     if stage is not None and stage not in sm.STAGES:
         raise HTTPException(status_code=400, detail="stage 不是合法阶段值")
     if status_ is not None and status_ not in sm.STATUSES:
         raise HTTPException(status_code=400, detail="status 不是合法状态值")
+    if source is not None and source not in ("admin", "ai_intake", "portal"):
+        raise HTTPException(status_code=400, detail="source 只能是 admin / ai_intake / portal")
     # 像搭积木一样拼查询：先「查全部、倒序」，传了哪个条件就再加一块 where
     stmt = select(Application).order_by(Application.id.desc())
     if stage:
@@ -93,8 +103,26 @@ def list_applications(
         stmt = stmt.where(Application.pos_id == pos_id)
     if can_id:
         stmt = stmt.where(Application.can_id == can_id)
+    if source:
+        stmt = stmt.where(Application.source == source)
     stmt = positions_svc.exclude_hidden_apps(stmt, db)  # 暂不招岗位的投递不显示
-    return [application_summary(a) for a in db.scalars(stmt).all()]
+    apps = db.scalars(stmt).all()
+    # 待发送通知数：列表里直接标出「有几条通知没发」，免得 HR 不知道要去详情页发
+    pending_map = {}
+    if apps:
+        ids = [a.id for a in apps]
+        rows = db.execute(
+            select(CandidateNotice.application_id, func.count())
+            .where(CandidateNotice.application_id.in_(ids), CandidateNotice.send_time.is_(None))
+            .group_by(CandidateNotice.application_id)
+        ).all()
+        pending_map = dict(rows)
+    out = []
+    for a in apps:
+        item = application_summary(a)
+        item["pending_notices"] = pending_map.get(a.id, 0)
+        out.append(item)
+    return out
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -218,9 +246,99 @@ def advance(app_id: AppId, body: AdvanceIn, db: Session = Depends(get_db)):
             detail="该投递已结束（已录用/已淘汰），请先撤回再操作",
         )
     sm.apply_result(a, body.from_stage, body.result, datetime.now())  # 真正的规则在状态机里
+    # 通过电话沟通/笔试/专业面/HR面/终面时，按 HR 的模板给候选人发通知（开关关了或已发过则跳过）
+    if body.result == "pass":
+        notice_service.send_stage_notice(db, a, body.from_stage)
     db.commit()
     db.refresh(a)
     return application_detail(a)
+
+
+@router.get("/{app_id}/notices")
+def list_app_notices(app_id: AppId, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
+    """某次投递的通过通知（草稿 + 已发送）
+
+**干什么用**：投递详情「候选人通知」页签。草稿（Send_Time 为空）候选人不可见，可编辑后发送；
+已发送的显示发送时间，是发送记录。
+"""
+    a = _get_or_404(db, app_id)
+    cand = db.get(Candidate, a.can_id)
+    return [
+        {
+            "id": n.id,
+            "stage": n.stage,
+            "title": n.title,
+            "body": n.body,
+            "send_time": n.send_time,
+            "read_time": n.read_time,
+            "candidate_name": cand.name if cand else None,
+        }
+        for n in notice_service.list_app_notices(db, app_id)
+    ]
+
+
+class NoticeEditIn(BaseModel):
+    title: str = Field(default="", max_length=100, description="通知标题，覆盖模板内容")
+    body: str = Field(default="", max_length=5000, description="通知正文，覆盖模板内容")
+
+
+@router.put("/{app_id}/notices/{notice_id}")
+def edit_app_notice(
+    app_id: AppId, notice_id: int, body: NoticeEditIn,
+    db: Session = Depends(get_db), user: User = Depends(get_current_hr),
+):
+    """编辑一条还没发送的通知草稿（逐人修改内容）"""
+    _get_or_404(db, app_id)
+    try:
+        n = notice_service.edit_notice(db, notice_id, body.title, body.body)
+        db.commit()
+    except LookupError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"id": n.id, "title": n.title, "body": n.body, "send_time": n.send_time}
+
+
+@router.post("/{app_id}/notices/{notice_id}/send")
+def send_app_notice(
+    app_id: AppId, notice_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_hr),
+):
+    """发送通知给候选人（写入发送时间，候选人登录即弹窗）；重复调用幂等"""
+    a = _get_or_404(db, app_id)
+    try:
+        n = notice_service.send_notice(db, notice_id)
+        db.commit()
+    except LookupError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        db.rollback()
+        # 候选人没手机号（没开通候选人端账号）时不能发送，提示 HR 补手机号后重试
+        raise HTTPException(status_code=400, detail=str(e))
+    log_action(db, user, "update", target_type="notice", target_id=notice_id, detail={
+        "candidate_id": a.can_id, "application_id": app_id, "stage": n.stage, "sent": True,
+    })
+    db.commit()
+    return {"id": n.id, "send_time": n.send_time}
+
+
+@router.delete("/{app_id}/notices/{notice_id}", status_code=status.HTTP_204_NO_CONTENT)
+def discard_app_notice(
+    app_id: AppId, notice_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_hr),
+):
+    """放弃一条草稿（不发送）。已发送的通知是记录，不能删。"""
+    _get_or_404(db, app_id)
+    try:
+        notice_service.discard_notice(db, notice_id)
+        db.commit()
+    except LookupError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{app_id}/revert")

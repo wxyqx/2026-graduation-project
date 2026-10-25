@@ -25,6 +25,7 @@ def application_summary(app: Application) -> dict:
         "current_stage": app.current_stage,
         "current_stage_label": STAGE_LABELS.get(app.current_stage or "", app.current_stage),  # 中文名，前端直接显示
         "overall_status": app.overall_status,
+        "source": app.source,
         "ai_result": app.ai_result,
         "ai_comment": app.ai_comment,
         "create_time": app.create_time,
@@ -39,6 +40,8 @@ def application_detail(app: Application) -> dict:
         {
             "id": app.candidate.id,
             "name": app.candidate.name,
+            "phone": app.candidate.phone,
+            "email": app.candidate.email,
             "remark": app.candidate.remark,
             "create_time": app.candidate.create_time,
         }

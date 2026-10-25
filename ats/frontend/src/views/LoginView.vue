@@ -85,6 +85,10 @@ async function submit() {
         </el-form>
         <div class="auth-footer">
           还没有账号？<router-link to="/register">去注册</router-link>
+          <span class="auth-sep">·</span>
+          <router-link to="/portal/login">我是候选人</router-link>
+          <span class="auth-sep">·</span>
+          <router-link to="/tech/login">技术管理</router-link>
         </div>
       </div>
     </main>
@@ -183,6 +187,10 @@ async function submit() {
   text-align: center;
   font-size: var(--ats-fs-note);
   color: var(--el-text-color-secondary);
+}
+.auth-sep {
+  margin: 0 6px;
+  color: var(--el-text-color-placeholder);
 }
 
 /* 窄屏：左栏的管线视觉先让位，登录表单占满整宽（不留两栏挤成一条） */

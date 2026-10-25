@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AiApiConfig, Application, Candidate, Position
+from app.services import accounts
 from app.services import llm, prompt as prompt_svc
 from app.services import state_machine as sm
 from app.services.pdf import PdfExtractError, extract_text
@@ -54,6 +55,7 @@ class IntakeItem:
     message: str | None = None  # 给用户看的一句话说明
     candidate_id: int | None = None
     candidate_name: str | None = None
+    phone: str | None = None  # AI 从简历里识别到的手机号（识别不到为 None）
     position_id: int | None = None
     position_name: str | None = None
     application_id: int | None = None
@@ -147,8 +149,10 @@ def _persist(db: Session, item: IntakeItem, now: datetime) -> None:
     result: str | None = p.get("result")
     # 姓名的清洗：AI 给的名字优先，没有就用文件名兜底
     name = (p.get("name") or "").strip()[:255] or _fallback_name(item)
+    phone: str | None = p.get("phone")  # 已在 parse_answer 里归一化并校验过
     reason = (p.get("reason") or "").strip()[:500]  # 表里 ai_comment 最多 500 字
 
+    item.phone = phone
     item.candidate_name = name
     item.ai_comment = reason or None
 
@@ -159,6 +163,14 @@ def _persist(db: Session, item: IntakeItem, now: datetime) -> None:
         return
     item.position_id = position.id
     item.position_name = position.position_name
+
+    # ---- 先按手机号找人：手机号比姓名可靠 ----
+    candidate: Candidate | None = None
+    if phone:
+        candidate = db.scalar(select(Candidate).where(Candidate.phone == phone))
+        if candidate is not None and not name:
+            name = candidate.name or ""
+            item.candidate_name = name
 
     # ---- 检查姓名和成绩 ----
     if not name:
@@ -171,13 +183,29 @@ def _persist(db: Session, item: IntakeItem, now: datetime) -> None:
         return
     item.ai_result = result
 
-    # ---- 找候选人：同名就复用，没有就新建 ----
-    candidate = db.scalar(select(Candidate).where(Candidate.name == name))
+    # ---- 手机号没找到人，再按姓名找 ----
+    remark = "AI录入"
     if candidate is None:
-        candidate = Candidate(name=name, remark="AI录入", create_time=now)
+        by_name = db.scalar(select(Candidate).where(Candidate.name == name))
+        if by_name is not None:
+            if phone and by_name.phone and by_name.phone != phone:
+                # 同名但手机号不同：多半是两个人，不复用（避免串账号）
+                remark = "AI录入（疑似同名，手机号不同，待人工合并）"
+            else:
+                candidate = by_name
+
+    if candidate is None:
+        candidate = Candidate(name=name, phone=phone, remark=remark, create_time=now, update_time=now)
         db.add(candidate)
         db.flush()  # flush = 先写进数据库拿到自动分配的 ID，但还没最终确认（commit）
+    else:
+        if phone and not candidate.phone:
+            candidate.phone = phone
+            candidate.update_time = now
     item.candidate_id = candidate.id
+    item.candidate_name = candidate.name or name
+    # 有手机号就确保候选人有登录账号（默认密码 admin）
+    accounts.ensure_candidate_account(db, candidate)
 
     # ---- 查重：这个人是不是已经投过这个岗位 ----
     existing = db.scalar(

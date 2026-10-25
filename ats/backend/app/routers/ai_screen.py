@@ -15,10 +15,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_hr
 from app.models import AiApiConfig, User
 from app.services.ai_screen import run_intake
-from app.services.settings import get_setting
+from app.services.settings import get_system_prompt
 
 router = APIRouter(prefix="/api/ai-screen", tags=["ai-screen"])
 
@@ -33,7 +33,7 @@ async def intake(
     extras: str | None = Form(default=None, description='各岗位的额外 AI 筛选限制（JSON 字符串，如 {"1":"只要985"}），前端本地存、不入库'),
     pos_id: int | None = Form(default=None, description="应聘岗位编号。填了=按这个岗位筛选（AI 只判断是否符合该岗位）；不填=AI 自动识别岗位"),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_hr),
 ):
     """AI 智能录入：传简历 → AI 认人、配岗、打分、自动建档
 
@@ -63,7 +63,7 @@ async def intake(
   "summary": {"ok": 1, "duplicate": 1, "extract_failed": 1},
   "results": [
     {"index": 0, "filename": "张三.pdf", "status": "ok",
-     "candidate_name": "张三", "position_name": "Java高级工程师",
+     "candidate_name": "张三", "phone": "13800138000", "position_name": "Java高级工程师",
      "ai_result": "pass", "ai_comment": "5年Java经验，符合要求",
      "application_id": 7, "config_used": "GLM免费版",
      "message": "AI 筛选通过，已进入简历筛选阶段"},
@@ -90,14 +90,12 @@ async def intake(
 """
     if not files and not texts:
         raise HTTPException(status_code=400, detail="请至少上传一个 PDF 或粘贴一段简历文本")
-    # 找出「我的」并且「已启用」的 AI 配置，一个都没有就没法干活
+    # 找出所有已启用的 AI 配置（v3.15 起是系统级，由技术管理员统一维护）
     configs = db.scalars(
-        select(AiApiConfig)
-        .where(AiApiConfig.user_id == user.id, AiApiConfig.is_enabled == 1)
-        .order_by(AiApiConfig.id)
+        select(AiApiConfig).where(AiApiConfig.is_enabled == 1).order_by(AiApiConfig.id)
     ).all()
     if not configs:
-        raise HTTPException(status_code=400, detail="没有已启用的 AI 配置，请先在系统设置中添加并启用")
+        raise HTTPException(status_code=400, detail="没有已启用的 AI 配置，请联系技术管理员")
 
     # 把每个上传的文件读成字节，放进列表 [(文件名, 字节), ...]
     payload: list[tuple[str, bytes]] = []
@@ -117,8 +115,8 @@ async def intake(
         except (ValueError, TypeError):
             extra_map = {}
 
-    # 取出这个用户在设置页写的 AI 筛选规则（没写过就传 None，服务层会用默认规则）
-    user_rules = get_setting(db, user.id, "ai_prompt")
+    # 系统级的 AI 筛选规则（技术管理员维护；没配置就用默认规则）
+    user_rules = get_system_prompt(db)
 
     try:
         return await run_intake(db, payload, texts, configs, extra_map, pos_id=pos_id, user_rules=user_rules)

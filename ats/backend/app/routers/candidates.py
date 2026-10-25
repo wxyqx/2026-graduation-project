@@ -16,15 +16,42 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
-from app.models import Application, Candidate
+from app.core.deps import get_current_hr
+from app.models import Application, Candidate, User
 from app.schemas.candidate import CandidateIn, CandidateOut, CandidateUpdate
+from app.services import accounts
+from app.services.phone import is_valid_phone, normalize_phone
 
-router = APIRouter(prefix="/api/candidates", tags=["candidates"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/api/candidates", tags=["candidates"], dependencies=[Depends(get_current_hr)])
 
 
-def _out(c: Candidate, count: int = 0) -> CandidateOut:
-    return CandidateOut(id=c.id, name=c.name, remark=c.remark, create_time=c.create_time, application_count=count)
+def _out(c: Candidate, count: int = 0, has_account: bool = False) -> CandidateOut:
+    return CandidateOut(
+        id=c.id,
+        name=c.name,
+        phone=c.phone,
+        email=c.email,
+        remark=c.remark,
+        onboard_date=c.onboard_date,
+        school=c.school,
+        degree=c.degree,
+        major=c.major,
+        expected_salary=c.expected_salary,
+        work_location=c.work_location,
+        hire_type=c.hire_type,
+        work_experience=c.work_experience,
+        create_time=c.create_time,
+        application_count=count,
+        has_account=has_account,
+    )
+
+
+def _account_ids(db: Session) -> set[int]:
+    """一次查出「哪些候选人已经开通账号」，列表页不用每人查一次。"""
+    rows = db.execute(
+        select(User.candidate_id).where(User.role == "candidate", User.candidate_id.isnot(None))
+    ).all()
+    return {r[0] for r in rows}
 
 
 def _count_map(db: Session) -> dict[int, int]:
@@ -52,21 +79,23 @@ def list_candidates(
         default=None,
         description="按有没有投递筛选：yes=只看有投递的；no=只看还没投递的；不传=全部",
     ),
+    phone: str | None = Query(default=None, description="手机号关键字，模糊搜索"),
+    has_account: str | None = Query(
+        default=None,
+        description="按有没有开通候选人端账号筛选：yes=已开通（有手机号）；no=未开通/待补手机号；不传=全部",
+    ),
     db: Session = Depends(get_db),
 ):
-    """候选人列表（可按姓名 / 备注 / 有无投递筛选）
+    """候选人列表（可按姓名 / 备注 / 手机号 / 账号状态 / 有无投递筛选）
 
 **干什么用**：前端「候选人管理」页的表格与搜索栏。
 
 **怎么填**（都可组合，是「且」的关系）：
 - `name`：姓名里含这几个字（模糊）
 - `remark`：备注里含这几个字（模糊）
+- `phone`：手机号里含这几位（模糊）
+- `has_account`：`yes` 只看已开通账号的；`no` 只看还没开通的（通常是待补手机号）
 - `has_application`：`yes` 只看有投递记录的；`no` 只看一条投递都没有的
-
-**返回什么**：数组，最新录入的在前，每个带 `application_count`（名下投递数，删除前会连带删除这些）：
-```json
-[{"id": 3, "name": "张三", "remark": "内推", "create_time": "2026-09-08T10:00:00", "application_count": 2}]
-```
 """
     # Query(default=None)：这些参数写在网址问号后面（?name=张&remark=内推），不传也行
     stmt = select(Candidate).order_by(Candidate.id.desc())
@@ -74,12 +103,24 @@ def list_candidates(
         stmt = stmt.where(Candidate.name.like(f"%{name}%"))  # % 是通配符：「张」能搜到「张三」「小张」
     if remark:
         stmt = stmt.where(Candidate.remark.like(f"%{remark}%"))
+    if phone:
+        stmt = stmt.where(Candidate.phone.like(f"%{phone}%"))
+    if has_account not in (None, "", "yes", "no"):
+        raise HTTPException(status_code=400, detail="has_account 只能是 yes 或 no")
+    account_ids = select(User.candidate_id).where(
+        User.role == "candidate", User.candidate_id.isnot(None)
+    )
+    if has_account == "yes":
+        stmt = stmt.where(Candidate.id.in_(account_ids))
+    elif has_account == "no":
+        stmt = stmt.where(Candidate.id.notin_(account_ids))
     counts = _count_map(db)
+    acct = _account_ids(db)
     if has_application == "yes":
         stmt = stmt.where(Candidate.id.in_(select(Application.can_id).distinct()))
     elif has_application == "no":
         stmt = stmt.where(Candidate.id.notin_(select(Application.can_id).distinct()))
-    return [_out(c, counts.get(c.id, 0)) for c in db.scalars(stmt).all()]
+    return [_out(c, counts.get(c.id, 0), c.id in acct) for c in db.scalars(stmt).all()]
 
 
 @router.post("", response_model=CandidateOut, status_code=status.HTTP_201_CREATED)
@@ -94,11 +135,35 @@ def create_candidate(body: CandidateIn, db: Session = Depends(get_db)):
 
 **注意**：系统按姓名认人，同名会被当成同一个人。手动建重名不拦你，但 AI 录入遇到同名会直接复用旧的。
 """
-    c = Candidate(name=body.name, remark=body.remark, create_time=datetime.now())
-    db.add(c)
-    db.commit()
+    phone = normalize_phone(body.phone)
+    if body.phone and not is_valid_phone(phone):
+        raise HTTPException(status_code=400, detail="手机号格式不正确")
+    if phone:
+        dup = db.scalar(select(Candidate).where(Candidate.phone == phone))
+        if dup is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"手机号 {phone} 已被候选人「{dup.name or dup.id}」使用",
+            )
+    now = datetime.now()
+    c = Candidate(
+        name=body.name,
+        phone=phone,
+        email=(body.email or "").strip() or None,
+        remark=body.remark,
+        create_time=now,
+        update_time=now,
+    )
+    try:
+        db.add(c)
+        db.flush()  # 先拿到候选人 ID，才能建账号
+        accounts.ensure_candidate_account(db, c)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="手机号已被其他候选人使用")
     db.refresh(c)
-    return _out(c)
+    return _out(c, 0, accounts.get_candidate_user(db, c.id) is not None)
 
 
 @router.get("/{can_id}", response_model=CandidateOut)
@@ -116,7 +181,7 @@ def get_candidate(can_id: Annotated[int, Path(description="候选人编号")], d
         select(func.count()).select_from(Application).where(Application.can_id == can_id), db
     )
     count = db.scalar(stmt) or 0
-    return _out(c, count)
+    return _out(c, count, accounts.get_candidate_user(db, can_id) is not None)
 
 
 @router.put("/{can_id}", response_model=CandidateOut)
@@ -147,6 +212,36 @@ def update_candidate(
     if "remark" in body.model_fields_set:
         c.remark = body.remark
 
+    # 手机号：改了立刻影响登录；清空 = 保留账号但再也登录不了
+    if "phone" in body.model_fields_set:
+        raw = (body.phone or "").strip()
+        if raw:
+            new_phone = normalize_phone(raw)
+            if not is_valid_phone(new_phone):
+                raise HTTPException(status_code=400, detail="手机号格式不正确")
+            other = db.scalar(
+                select(Candidate).where(Candidate.phone == new_phone, Candidate.id != c.id)
+            )
+            if other is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"手机号 {new_phone} 已被候选人「{other.name or other.id}」使用",
+                )
+            c.phone = new_phone
+        else:
+            c.phone = None
+        c.update_time = datetime.now()
+
+    if "email" in body.model_fields_set:
+        c.email = (body.email or "").strip() or None
+        c.update_time = datetime.now()
+
+    # HR 从简历摘录的个人信息：文本字段，填什么存什么，传空即清空
+    for f in ("onboard_date", "school", "degree", "major", "expected_salary", "work_location", "hire_type", "work_experience"):
+        if f in body.model_fields_set:
+            setattr(c, f, (getattr(body, f) or "").strip() or None)
+            c.update_time = datetime.now()
+
     if "name" in body.model_fields_set or body.name is not None:
         new_name = (body.name or "").strip()
         if not new_name:
@@ -169,14 +264,22 @@ def update_candidate(
                 )
         c.name = new_name
 
-    db.commit()
+    # 有手机号就确保账号存在（首次填手机号时自动开通，默认密码 admin）
+    if c.phone:
+        accounts.ensure_candidate_account(db, c)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="手机号已被其他候选人使用")
     db.refresh(c)
     from app.services import positions as positions_svc
     stmt = positions_svc.exclude_hidden_apps(
         select(func.count()).select_from(Application).where(Application.can_id == can_id), db
     )
     count = db.scalar(stmt) or 0
-    return _out(c, count)
+    return _out(c, count, accounts.get_candidate_user(db, can_id) is not None)
 
 
 @router.delete("/{can_id}", status_code=status.HTTP_200_OK)
@@ -198,6 +301,11 @@ def delete_candidate(can_id: Annotated[int, Path(description="候选人编号")]
 - 409：意外删不掉（一般不会出现）
 """
     c = _get_or_404(db, can_id)
+    # 先删候选人账号，再删投递，最后删候选人
+    linked_user = accounts.get_candidate_user(db, can_id)
+    if linked_user is not None:
+        db.delete(linked_user)
+        db.flush()
     # 先删投递，再删候选人——同一个事务里，要么全成功要么全不成功（rollback）
     count = db.scalar(select(func.count()).select_from(Application).where(Application.can_id == can_id)) or 0
     if count:

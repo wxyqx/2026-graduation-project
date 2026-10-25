@@ -14,6 +14,7 @@ import { computed, reactive, ref, watch } from 'vue'
 
 import { authApi } from '../api'
 import { auth } from '../stores/auth'
+import UserAvatar from '../components/UserAvatar.vue'
 
 const props = defineProps({ modelValue: { type: Boolean, default: false } })
 const emit = defineEmits(['update:modelValue'])
@@ -66,6 +67,11 @@ const rules = {
   ],
 }
 
+// 头像换好后广播刷新（顶栏头像监听此事件），并标记本地更新时间
+function onAvatarUpdated() {
+  window.dispatchEvent(new Event('avatar-updated'))
+}
+
 async function save() {
   await formRef.value.validate()
   // 要改密码就必须先验当前密码
@@ -103,12 +109,19 @@ async function save() {
     destroy-on-close
     :close-on-click-modal="false"
   >
-    <!-- 身份抬头：换谁进来都先看到「这是谁」，下面才是可改的字段 -->
+    <!-- 身份抬头：换谁进来都先看到「这是谁」，头像点一下就能换 -->
     <div class="identity">
-      <div class="avatar">{{ initial }}</div>
+      <UserAvatar
+        :fetch-blob="authApi.avatarBlob"
+        :upload="authApi.updateAvatar"
+        editable
+        :name="auth.user.value?.username || '用户'"
+        :size="96"
+        @updated="onAvatarUpdated"
+      />
       <div class="who">
         <div class="who-name">{{ auth.user.value?.username || '用户' }}</div>
-        <div class="muted">注册于 {{ createTime }}</div>
+        <div class="muted">点击头像可更换 · 注册于 {{ createTime }}</div>
       </div>
     </div>
 

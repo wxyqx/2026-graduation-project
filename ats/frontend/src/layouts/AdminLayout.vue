@@ -15,10 +15,11 @@
 import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { statsApi } from '../api'
+import { authApi, statsApi } from '../api'
 import { auth } from '../stores/auth'
 import { THEMES, applyTheme, theme } from '../theme'
 import ProfileDialog from '../views/ProfileDialog.vue'
+import UserAvatar from '../components/UserAvatar.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -87,6 +88,10 @@ function onUserCommand(command) {
           <el-icon><User /></el-icon>
           <template #title>候选人管理</template>
         </el-menu-item>
+        <el-menu-item index="/form-templates">
+          <el-icon><Document /></el-icon>
+          <template #title>表单模板</template>
+        </el-menu-item>
         <el-menu-item index="/applications">
           <el-icon><Tickets /></el-icon>
           <template #title>投递列表</template>
@@ -133,7 +138,7 @@ function onUserCommand(command) {
           </el-radio-group>
           <el-dropdown aria-label="用户菜单" @command="onUserCommand">
             <span class="user" :class="{ 'is-active': isUserPage }">
-              <el-icon><User /></el-icon>
+              <UserAvatar :fetch-blob="authApi.avatarBlob" :name="auth.user.value?.username || '用户'" :size="32" />
               {{ auth.user.value?.username || '用户' }}
               <el-icon><ArrowDown /></el-icon>
             </span>
@@ -287,7 +292,7 @@ function onUserCommand(command) {
 .user {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   cursor: pointer;
   font-size: var(--ats-fs-body);
   color: var(--el-text-color-regular);

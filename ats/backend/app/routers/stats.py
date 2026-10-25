@@ -15,14 +15,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_hr
 from app.models import Application, Position, User
 from app.services import positions as positions_svc
 from app.services import settings as settings_svc
 from app.services import summary
 from app.services.state_machine import STAGE_LABELS, STAGES
 
-router = APIRouter(prefix="/api/stats", tags=["stats"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/api/stats", tags=["stats"], dependencies=[Depends(get_current_hr)])
 
 
 def _week_start(d: datetime) -> datetime:
@@ -222,7 +222,7 @@ def matrix_cell(
     start_date: date | None = Query(default=None, description="自定义范围的开始日期（仅 range=custom 用）"),
     end_date: date | None = Query(default=None, description="自定义范围的结束日期（仅 range=custom 用）"),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_hr),
 ):
     """看交叉表某个格子里具体是哪些人（点数字时调它）
 
@@ -267,7 +267,7 @@ def in_progress(
         description="只显示当前处于这些阶段的人，可传多个（如 stages=test&stages=pro）；不传 = 全部阶段。可选值同 stage 过滤：ai/resume/phone/test/pro/hr/final",
     ),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_hr),
 ):
     """进行中的候选人所处阶段清单（周报第二张表）
 

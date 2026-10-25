@@ -23,7 +23,7 @@ from openpyxl import load_workbook
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8001"  # 服务地址，可以从命令行传
 STAMP = str(int(time.time()))  # 当前时间戳，拼进用户名/岗位名，保证每次跑都不重名
 PYMYSQL_PW = os.environ.get("ATS_DB_PASSWORD", "your-password")  # MySQL root 密码，可用环境变量 ATS_DB_PASSWORD 覆盖
-created = {"users": [], "positions": [], "candidates": [], "applications": [], "configs": []}  # 记下建了什么，最后好删
+created = {"users": [], "positions": [], "candidates": [], "applications": [], "configs": [], "config_prev": []}  # 记下建了什么，最后好删
 passed = 0  # 通过了几项
 
 
@@ -275,26 +275,35 @@ def run():
     check(c.get("/api/stats/overview", headers=H).json()["position_count"] == before_ov["position_count"], "恢复后在招岗位数回来")
 
 
-    print("== ai-configs（用户隔离）")
+    print("== 系统级 AI 配置（技术管理端）")
+    ra = c.post("/api/tech/auth/login", json={"username": "tech", "password": "admin"})
+    check(ra.status_code == 200, "技术管理员登录")
+    T = {"Authorization": f"Bearer {ra.json()['token']}"}
+    check(c.get("/api/tech/accounts", headers=H).status_code == 403, "HR 不能访问技术管理接口")
+
+    # 先把库里已有的 AI 配置全部停用，保证「无配置」分支可测；结束时恢复
+    conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password=PYMYSQL_PW, database="ats")
+    cur = conn.cursor()
+    cur.execute("SELECT ID, is_enabled FROM AI_API_Config")
+    created["config_prev"] = [(int(a), int(b)) for a, b in cur.fetchall()]
+    cur.execute("UPDATE AI_API_Config SET is_enabled=0")
+    conn.commit()
+    conn.close()
+
     check(c.post("/api/ai-screen/intake", headers=H, data={"texts": ["x" * 50]}).status_code == 400, "无启用配置 intake 400")
-    r = c.post("/api/ai-configs", headers=H, json={"name": "cfgA", "base_url": "http://127.0.0.1:9/v1", "api_key": "k", "model": "m"})
+    r = c.post("/api/tech/ai-configs", headers=T, json={"name": "cfgA", "base_url": "http://127.0.0.1:9/v1", "api_key": "k", "model": "m"})
     check(r.status_code == 201 and r.json()["is_enabled"] is False, "创建配置默认停用")
     k1 = r.json()["id"]; created["configs"].append(k1)
-    r = c.post("/api/ai-configs", headers=H, json={"name": "cfgB", "base_url": "http://127.0.0.1:9/v1/", "api_key": "k", "model": "m", "is_enabled": True})
+    r = c.post("/api/tech/ai-configs", headers=T, json={"name": "cfgB", "base_url": "http://127.0.0.1:9/v1/", "api_key": "k", "model": "m", "is_enabled": True})
+    check(r.status_code == 201, "创建启用配置")
     k2 = r.json()["id"]; created["configs"].append(k2)
-    check(c.put(f"/api/ai-configs/{k1}/enable", headers=H).json()["is_enabled"] is True, "enable")
-    check(c.put(f"/api/ai-configs/{k1}/disable", headers=H).json()["is_enabled"] is False, "disable")
-    check(c.put(f"/api/ai-configs/{k1}", headers=H, json={"model": "glm-4-flash"}).json()["model"] == "glm-4-flash", "更新 model")
-    check(len(c.get("/api/ai-configs", headers=H).json()) == 2, "列表 2 条")
-    ub = f"smoke_b_{STAMP}"
-    r = c.post("/api/auth/register", json={"username": ub, "password": pw}); created["users"].append(r.json()["user"]["id"])
-    HB = {"Authorization": f"Bearer {r.json()['token']}"}
-    check(c.get("/api/ai-configs", headers=HB).json() == [], "用户 B 看不到 A 的配置")
-    check(c.put(f"/api/ai-configs/{k1}", headers=HB, json={"model": "x"}).status_code == 404, "用户 B 改 A 的配置 404")
-    check(c.delete(f"/api/ai-configs/{k1}", headers=HB).status_code == 404, "用户 B 删 A 的配置 404")
+    check(c.put(f"/api/tech/ai-configs/{k1}/enable", headers=T).json()["is_enabled"] is True, "enable")
+    check(c.put(f"/api/tech/ai-configs/{k1}/disable", headers=T).json()["is_enabled"] is False, "disable")
+    check(c.put(f"/api/tech/ai-configs/{k1}", headers=T, json={"model": "glm-4-flash"}).json()["model"] == "glm-4-flash", "更新 model")
+    check(len(c.get("/api/tech/ai-configs", headers=T).json()) >= 2, "系统配置列表 >= 2 条")
 
     print("== ai-screen intake（配置不可达，验证提取与错误路径）")
-    c.put(f"/api/ai-configs/{k1}/enable", headers=H)
+    c.put(f"/api/tech/ai-configs/{k1}/enable", headers=T)
     good_pdf = make_pdf("姓名：王五\n应聘：Java工程师\n5年Java开发经验，精通Spring Boot、MySQL、Redis，主导过电商系统重构。")
     blank_pdf = fitz.open(); blank_pdf.new_page(); blank = blank_pdf.tobytes(); blank_pdf.close()
     before = len(c.get("/api/candidates", headers=H).json())
@@ -332,16 +341,17 @@ def run():
     check(c.post("/api/export", headers=H, json={"fields": ["hacker"]}).status_code == 400, "非法字段 400")
     check(c.post("/api/export", headers=H, json={"filters": {"stage": "zzz"}}).status_code == 400, "非法 stage 400")
 
-    print("== 系统设置：AI 提示词 ==")
-    check(c.get("/api/settings/ai-prompt").status_code == 401, "提示词接口未登录 401")
-    d = c.get("/api/settings/ai-prompt", headers=H).json()
+    print("== 系统设置：AI 提示词（技术管理端）==")
+    check(c.get("/api/tech/ai-prompt").status_code == 401, "提示词接口未登录 401")
+    check(c.get("/api/tech/ai-prompt", headers=H).status_code == 403, "HR 不能改系统提示词")
+    d = c.get("/api/tech/ai-prompt", headers=T).json()
     check(d["is_custom"] is False and len(d["rules"]) > 0, "初始为系统默认规则")
     check("只能是一个 JSON 对象" in d["format_rules"] and "pass" in d["format_rules"], "格式说明锁定并含关键约束")
     check(len(d["default_rules"]) > 0, "返回默认规则供恢复用")
-    d = c.put("/api/settings/ai-prompt", headers=H, json={"rules": "冒烟测试规则：只招博士"}).json()
+    d = c.put("/api/tech/ai-prompt", headers=T, json={"rules": "冒烟测试规则：只招博士"}).json()
     check(d["is_custom"] is True and d["rules"] == "冒烟测试规则：只招博士", "保存自定义规则")
-    check(c.get("/api/settings/ai-prompt", headers=H).json()["rules"] == "冒烟测试规则：只招博士", "自定义规则已持久化")
-    d = c.put("/api/settings/ai-prompt", headers=H, json={"rules": ""}).json()
+    check(c.get("/api/tech/ai-prompt", headers=T).json()["rules"] == "冒烟测试规则：只招博士", "自定义规则已持久化")
+    d = c.put("/api/tech/ai-prompt", headers=T, json={"rules": ""}).json()
     check(d["is_custom"] is False and d["rules"] == d["default_rules"], "传空恢复系统默认")
 
     print("== AI 录入：指定岗位 / 参数校验 ==")
@@ -530,8 +540,11 @@ def cleanup():
         if ids:
             cur.execute(f"DELETE FROM `{table}` WHERE ID IN ({','.join(map(str, ids))})")
     dele("Application", created["applications"])
+    if created["configs"]:
+        cur.execute(f"DELETE FROM AI_API_Config WHERE ID IN ({','.join(map(str, created['configs']))})")
+    for cid, enabled in created["config_prev"]:
+        cur.execute("UPDATE AI_API_Config SET is_enabled=%s WHERE ID=%s", (enabled, cid))
     if created["users"]:
-        cur.execute(f"DELETE FROM AI_API_Config WHERE User_ID IN ({','.join(map(str, created['users']))})")
         cur.execute(f"DELETE FROM App_Setting WHERE User_ID IN ({','.join(map(str, created['users']))})")
     dele("Candidate", created["candidates"])
     dele("Position", created["positions"])

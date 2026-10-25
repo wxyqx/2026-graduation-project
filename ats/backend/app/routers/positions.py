@@ -13,12 +13,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_hr
 from app.models import Application, Position
 from app.schemas.position import PositionIn, PositionOut, PositionUpdate
 
-# dependencies=[Depends(get_current_user)]：这个文件里所有接口都要先过门卫（必须登录）
-router = APIRouter(prefix="/api/positions", tags=["positions"], dependencies=[Depends(get_current_user)])
+# dependencies=[Depends(get_current_hr)]：这个文件里所有接口都要先过门卫（必须登录）
+router = APIRouter(prefix="/api/positions", tags=["positions"], dependencies=[Depends(get_current_hr)])
 
 
 def _count_map(db: Session) -> dict[int, int]:

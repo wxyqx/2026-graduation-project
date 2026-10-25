@@ -13,6 +13,13 @@ export const authApi = {
   // 修改个人信息（用户名 / 密码）。data 例：{username} 或 {username, current_password, new_password}
   // 后端会重新发一张 token，前端拿到后要替换本地登录状态
   updateProfile: (data) => http.put('/auth/profile', data),
+  // 头像：上传即替换；获取返回 blob（404 = 未设置，前端显示首字占位）
+  updateAvatar: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.put('/auth/avatar', fd)
+  },
+  avatarBlob: () => http.get('/auth/avatar', { responseType: 'blob', silent: true }),
 }
 
 // ---- 岗位 ----
@@ -26,11 +33,40 @@ export const positionApi = {
 
 // ---- 候选人 ----
 export const candidateApi = {
-  // 参数可以是字符串（当姓名搜索用）或对象（{name, remark, has_application}）
+  // 参数可以是字符串（当姓名搜索用）或对象（{name, remark, has_application, phone, has_account}）
   list: (query) => http.get('/candidates', { params: typeof query === 'string' ? (query ? { name: query } : {}) : (query || {}) }),
+  detail: (id) => http.get(`/candidates/${id}`),
   create: (data) => http.post('/candidates', data),
   update: (id, data) => http.put(`/candidates/${id}`, data),
   remove: (id) => http.delete(`/candidates/${id}`), // 级联删除：连带删掉他名下的投递
+  // 文件（HR 上传 / 候选人只读）
+  files: (id) => http.get(`/candidates/${id}/files`),
+  uploadFile: (id, file, category = 'resume', applicationId = null) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('category', category)
+    if (applicationId) fd.append('application_id', String(applicationId))
+    return http.post(`/candidates/${id}/files`, fd)
+  },
+  removeFile: (fileId) => http.delete(`/files/${fileId}`),
+  // 发送 Offer 文件给候选人（重复发送幂等，保留首次发送时间）
+  sendOfferFile: (fileId) => http.put(`/files/${fileId}/send`),
+  // 预览用：拿原始 blob（下载是触发浏览器保存，这个给调用方自己处理）
+  fileBlob: (fileId) => http.get(`/files/${fileId}/download`, { responseType: 'blob' }),
+
+  async downloadFile(file) {
+    const resp = await http.get(`/files/${file.id}/download`, { responseType: 'blob' })
+    const url = URL.createObjectURL(resp.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.original_name || 'file'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
+  // 该候选人的全部表单答卷（个人资料表 + 各投递岗位表）
+  forms: (id) => http.get(`/candidates/${id}/forms`),
 }
 
 // ---- 投递 ----
@@ -45,6 +81,24 @@ export const applicationApi = {
   // 给某一关补写「结果原因」/「面试评价」（不改流程状态；空字符串 = 清空该项）
   saveStageNote: (id, stage, reason, evaluation) =>
     http.put(`/applications/${id}/stage-note`, { stage, reason, evaluation }),
+  // ---- 通过通知（草稿 → 编辑 → 发送）----
+  appNotices: (appId) => http.get(`/applications/${appId}/notices`),
+  editAppNotice: (appId, noticeId, data) => http.put(`/applications/${appId}/notices/${noticeId}`, data),
+  sendAppNotice: (appId, noticeId) => http.post(`/applications/${appId}/notices/${noticeId}/send`),
+  discardAppNotice: (appId, noticeId) => http.delete(`/applications/${appId}/notices/${noticeId}`),
+  forms: (id) => http.get(`/applications/${id}/forms`),
+}
+
+// ---- 表单模板（HR 配置）----
+export const formTemplateApi = {
+  list: (params) => http.get('/form-templates', { params }),
+  detail: (id) => http.get(`/form-templates/${id}`),
+  create: (data) => http.post('/form-templates', data),
+  update: (id, data) => http.put(`/form-templates/${id}`, data),
+  saveFields: (id, fields) => http.put(`/form-templates/${id}/fields`, { fields }),
+  deactivate: (id) => http.delete(`/form-templates/${id}`),
+  // 物理删除：仅限已停用且没有答卷的模板，有答卷时后端返回 409
+  purge: (id) => http.delete(`/form-templates/${id}?purge=true`),
 }
 
 // ---- 统计 ----
@@ -58,10 +112,16 @@ export const statsApi = {
   matrixCell: (params) => http.get('/stats/matrix/cell', { params }),
 }
 
-// ---- 系统设置（阶段文案改写）----
+// ---- 系统设置（阶段文案改写、候选人表单可见阶段）----
 export const settingsApi = {
   // note 传空 = 恢复自动生成
   saveStageNote: (appId, note) => http.put('/settings/stage-note', { app_id: appId, note }),
+  // 候选人在哪一关后能看到岗位申请表/职业底色图
+  getPortalFormStage: () => http.get('/settings/portal-form-stage'),
+  savePortalFormStage: (cfg) => http.put('/settings/portal-form-stage', cfg),
+  // 通过通知模板（笔试/专业面/HR面/终面）
+  getStageNotice: () => http.get('/settings/stage-notice'),
+  saveStageNotice: (cfg) => http.put('/settings/stage-notice', cfg),
 }
 
 // ---- AI 录入简历 ----
@@ -76,27 +136,11 @@ export async function uploadIntake(files, texts, extras = {}, posId = null) {
   return http.post('/ai-screen/intake', fd, { timeout: 180000 }) // AI 可能想得慢，多等一会
 }
 
-// ---- AI 筛选提示词（系统设置）----
-export const promptApi = {
-  get: () => http.get('/settings/ai-prompt'),
-  save: (rules) => http.put('/settings/ai-prompt', { rules }),
-}
-
 // ---- 面试评价 ----
 // 贴逐字稿 → 返回按固定模板写好的评价文字（后端不落库）
 // 逐字稿比简历长、AI 写得也慢，超时要放大（默认只有 60 秒）
 export const interviewApi = {
   evaluate: (transcript) => http.post('/interview/evaluate', { transcript }, { timeout: 180000 }),
-}
-
-// ---- AI 接口配置 ----
-export const aiConfigApi = {
-  list: () => http.get('/ai-configs'),
-  create: (data) => http.post('/ai-configs', data),
-  update: (id, data) => http.put(`/ai-configs/${id}`, data),
-  remove: (id) => http.delete(`/ai-configs/${id}`),
-  enable: (id) => http.put(`/ai-configs/${id}/enable`),
-  disable: (id) => http.put(`/ai-configs/${id}/disable`),
 }
 
 // ---- 汇总导出 ----

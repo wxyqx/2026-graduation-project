@@ -22,30 +22,56 @@ from sqlalchemy import text
 
 from app.core.database import engine
 from app.routers import (
-    ai_configs,
     ai_screen,
     applications,
     auth,
+    candidate_files,
     candidates,
     export,
+    forms,
     interview,
+    portal_auth,
+    portal_files,
+    portal_forms,
+    portal_positions,
+    portal_applications,
+    portal_notices,
     positions,
     settings,
     stats,
+    tech_accounts,
+    tech_auth,
+    tech_backup,
+    tech_config,
+    tech_logs,
+    tech_overview,
 )
 
 # /docs 文档页上每个分组的中文说明
 TAGS = [
-    {"name": "auth", "description": "认证：注册 / 登录 / 当前用户 / 个人信息"},
+    {"name": "auth", "description": "认证：注册 / 登录 / 当前用户 / 个人信息（HR）"},
+    {"name": "portal-auth", "description": "候选人端认证：手机号登录 / 我是谁 / 改密"},
+    {"name": "files", "description": "候选人文件（HR）：列表 / 代传 / 下载 / 删除"},
+    {"name": "portal-files", "description": "候选人端文件：上传 / 列表 / 下载 / 删除"},
+    {"name": "forms", "description": "表单模板与答卷（HR）：模板 CRUD、字段、查看候选人答卷"},
+    {"name": "portal-forms", "description": "候选人端表单：可填列表 / 保存草稿 / 提交"},
+    {"name": "portal-positions", "description": "候选人端岗位：在招列表 / 详情"},
+    {"name": "portal-notices", "description": "候选人端通知：通过关卡后按模板发送，登录弹窗展示"},
+    {"name": "portal-applications", "description": "候选人端投递：投递（AI 首筛）/ 我的投递 / 详情"},
     {"name": "positions", "description": "岗位管理"},
     {"name": "candidates", "description": "候选人管理"},
     {"name": "applications", "description": "投递与 7 阶段流程（推进 / 撤回 / 各关原因与面试评价）"},
-    {"name": "ai-configs", "description": "AI 接口配置（按登录用户隔离）"},
     {"name": "ai-screen", "description": "AI 智能录入（PDF / 纯文本 → 自动建档）"},
     {"name": "interview", "description": "面试评价（逐字稿 → 按固定模板出评价）"},
-    {"name": "settings", "description": "系统设置（AI 筛选提示词）"},
+    {"name": "settings", "description": "HR 端设置（周报阶段文案）"},
     {"name": "stats", "description": "统计总览"},
     {"name": "export", "description": "汇总导出（xlsx / csv）"},
+    {"name": "tech-auth", "description": "技术管理端认证：用户名登录 / 改密"},
+    {"name": "tech-accounts", "description": "技术管理端：账号管理（HR / 技术管理员 / 候选人）"},
+    {"name": "tech-config", "description": "技术管理端：系统配置（AI 接口 + 提示词）"},
+    {"name": "tech-overview", "description": "技术管理端：运行概览"},
+    {"name": "tech-logs", "description": "技术管理端：操作日志"},
+    {"name": "tech-backup", "description": "技术管理端：数据备份导出"},
 ]
 
 app = FastAPI(
@@ -102,7 +128,31 @@ app.add_middleware(
 )
 
 # 把 8 组接口全部挂上。每个 routers/xxx.py 里都有一个 router 变量
-for r in (auth, positions, candidates, applications, ai_configs, ai_screen, interview, settings, stats, export):
+for r in (
+    auth,
+    portal_auth,
+    tech_auth,
+    tech_accounts,
+    tech_config,
+    tech_overview,
+    tech_logs,
+    tech_backup,
+    positions,
+    candidates,
+    candidate_files,
+    applications,
+    forms,
+    portal_forms,
+    portal_positions,
+    portal_applications,
+    portal_files,
+    portal_notices,
+    ai_screen,
+    interview,
+    settings,
+    stats,
+    export,
+):
     app.include_router(r.router)
 
 # 把各接口的中文 docstring 提升为 /docs 里的摘要与描述

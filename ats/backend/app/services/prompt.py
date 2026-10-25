@@ -20,6 +20,7 @@ import json
 import re
 
 from app.models import Position
+from app.services.phone import is_valid_phone, normalize_phone
 
 # ======================================================================
 # 一、提示词
@@ -35,12 +36,12 @@ DEFAULT_RULES = (
 FORMAT_RULES = (
     "【必须遵守的回答铁律】\n"
     "1. 你的回复必须且只能是一个 JSON 对象，不要输出任何解释、前后缀、markdown 代码块标记。\n"
-    '2. 对象必须包含四个键：name（候选人姓名，字符串）、position_id（岗位编号，整数或 null）、'
-    'result（只能是字符串 "pass" 或 "fail"）、reason（判断理由，不超过 120 字）。\n'
+    '2. 对象必须包含五个键：name（候选人姓名，字符串）、phone（候选人手机号，字符串，没有就填空字符串）、'
+    'position_id（岗位编号，整数或 null）、result（只能是字符串 "pass" 或 "fail"）、reason（判断理由，不超过 120 字）。\n'
     '3. result 只能是 "pass" 或 "fail" 这两个英文单词之一，不要写「通过」「合格」等中文，'
     "不要写 true/false。\n"
     "4. 示例（仅供格式参考）："
-    '{"name": "张三", "position_id": 1, "result": "pass", "reason": "5年Java经验，符合岗位要求"}'
+    '{"name": "张三", "phone": "13800138000", "position_id": 1, "result": "pass", "reason": "5年Java经验，符合岗位要求"}'
 )
 
 SYSTEM_HEAD = "你是一名专业的招聘助理，负责阅读候选人简历并根据岗位要求做初步筛选。"
@@ -95,7 +96,7 @@ def build_user_prompt(
             "## 简历内容\n"
             f"{resume_text[:resume_chars]}\n\n"
             "## 任务\n"
-            "1. 识别候选人姓名，填入 name；确实无法识别时填空字符串。\n"
+            "1. 识别候选人姓名，填入 name；识别简历里的手机号，填入 phone；确实没有就填空字符串。\n"
             f"2. 岗位已由使用者指定为编号 {fixed_position.id}（{fixed_position.position_name}），"
             f"position_id 一律填 {fixed_position.id}，不要改动、不要选别的岗位。\n"
             '3. 严格依据该岗位的 requirements 判断 result 为 "pass" 或 "fail"，'
@@ -111,7 +112,7 @@ def build_user_prompt(
             "## 简历内容\n"
             f"{resume_text[:resume_chars]}\n\n"
             "## 任务\n"
-            "1. 识别候选人姓名，填入 name；确实无法识别时填空字符串。\n"
+            "1. 识别候选人姓名，填入 name；识别简历里的手机号，填入 phone；确实没有就填空字符串。\n"
             "2. 判断这份简历应聘的是哪个岗位，把该岗位的 id 填入 position_id。\n"
             "   判断标准（务必从严）：\n"
             "   · 简历里如果直接写了应聘/期望岗位，以它为准，在列表里找对应的那个；\n"
@@ -143,6 +144,7 @@ _FAIL_WORDS = {"fail", "failed", "淘汰", "不合格", "不符合", "否", "no"
 
 # 字段别名：AI 可能用中文键名或别的叫法
 _NAME_KEYS = ("name", "姓名", "候选人姓名", "candidate", "candidate_name")
+_PHONE_KEYS = ("phone", "mobile", "手机号", "手机", "联系电话", "电话", "联系方式")
 _RESULT_KEYS = ("result", "是否通过", "通过与否", "结论", "conclusion", "判断", "筛选结果", "pass")
 _POS_KEYS = ("position_id", "positionid", "position", "岗位id", "岗位编号", "岗位", "pos_id", "job_id")
 _REASON_KEYS = ("reason", "理由", "原因", "说明", "comment", "备注", "评价")
@@ -318,12 +320,23 @@ def pick_position(obj: dict, pos_map: dict[int, Position], fixed: Position | Non
 def parse_answer(content: str, pos_map: dict[int, Position], fixed: Position | None = None) -> dict:
     """把 AI 的回答一步到位翻译成程序要的东西。
 
-    返回 {"name":..., "position":..., "result":..., "reason":..., "note":..., "obj":原始字典}
-    其中 result 认不出时为 None（调用方据此判断要不要重试）。
+    返回 {"name":..., "phone":..., "position":..., "result":..., "reason":..., "note":..., "obj":原始字典}
+    其中 result 认不出时为 None（调用方据此判断要不要重试）；phone 认不出/格式不对时为 None。
     """
     obj = extract_json(content)
     name = str(_first_key(obj, _NAME_KEYS)[1] or "").strip()
+    phone = normalize_phone(str(_first_key(obj, _PHONE_KEYS)[1] or ""))
+    if not is_valid_phone(phone):
+        phone = None
     reason = str(_first_key(obj, _REASON_KEYS)[1] or "").strip()
     result = normalize_result(_first_key(obj, _RESULT_KEYS)[1])
     position, note = pick_position(obj, pos_map, fixed)
-    return {"name": name, "position": position, "result": result, "reason": reason, "note": note, "obj": obj}
+    return {
+        "name": name,
+        "phone": phone,
+        "position": position,
+        "result": result,
+        "reason": reason,
+        "note": note,
+        "obj": obj,
+    }

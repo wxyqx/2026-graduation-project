@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_hr
 from app.models import AiApiConfig, User
 from app.schemas.ai_config import AiConfigIn, AiConfigOut, AiConfigUpdate
 
@@ -43,7 +43,7 @@ def _get_own_or_404(db: Session, cfg_id: int, user: User) -> AiApiConfig:
 
 
 @router.get("", response_model=list[AiConfigOut])
-def list_configs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def list_configs(db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
     """我的 AI 配置列表
 
 **干什么用**：前端「系统设置」页的 AI 配置表格。只显示你自己添加的，别人的看不到。
@@ -58,7 +58,7 @@ def list_configs(db: Session = Depends(get_db), user: User = Depends(get_current
 
 
 @router.post("", response_model=AiConfigOut, status_code=status.HTTP_201_CREATED)
-def create_config(body: AiConfigIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def create_config(body: AiConfigIn, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
     """添加一个 AI 配置（告诉系统去哪找 AI、凭什么用）
 
 **干什么用**：系统自己不会「思考」，筛简历要请外面的大模型帮忙。这里填大模型的地址、密钥、模型名。
@@ -91,7 +91,7 @@ def create_config(body: AiConfigIn, db: Session = Depends(get_db), user: User = 
 
 @router.put("/{cfg_id}", response_model=AiConfigOut)
 def update_config(
-    cfg_id: CfgId, body: AiConfigUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    cfg_id: CfgId, body: AiConfigUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_hr)
 ):
     """编辑配置（只改你传的字段）
 
@@ -112,7 +112,7 @@ def update_config(
 
 
 @router.delete("/{cfg_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def delete_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
     """删除配置
 
 **返回什么**：204，无内容。
@@ -126,7 +126,7 @@ def delete_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Dep
 
 
 @router.put("/{cfg_id}/enable", response_model=AiConfigOut)
-def enable_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def enable_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
     """启用一个配置（开关拨到「开」）
 
 **干什么用**：前端设置页每行的开关。只有启用的配置才会被 AI 录入使用。可以同时开好几个。
@@ -141,7 +141,7 @@ def enable_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Dep
 
 
 @router.put("/{cfg_id}/disable", response_model=AiConfigOut)
-def disable_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def disable_config(cfg_id: CfgId, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
     """停用一个配置（开关拨到「关」）
 
 **干什么用**：某个 AI 额度用完了、或者想暂时不用它，关掉但不删。

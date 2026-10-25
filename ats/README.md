@@ -54,11 +54,11 @@ npm run dev
 
 ```
 backend/app/
-  core/       config（.env）、database（engine/session）、deps（get_current_user）
-  models/     6 张表 ORM，字段照 crebas.sql
+  core/       config（.env）、database（engine/session）、deps（三角色门卫：hr / candidate / admin）
+  models/     12 张表 ORM，字段照 crebas.sql
   schemas/    Pydantic 请求/响应
-  routers/    auth / positions / candidates / applications / ai_configs / ai_screen / settings / stats / export
-  services/   security（bcrypt+JWT）、state_machine（8 阶段推进/撤回）、pdf、llm、prompt（提示词与回答容错）、ai_screen（录入编排）、summary（阶段×岗位交叉表）、positions（暂不招岗位统一排除）、export、views、settings
+  routers/    auth / portal_auth / portal_positions / portal_applications / portal_files / portal_forms / candidate_files / forms / tech_auth / tech_accounts / tech_config / tech_overview / tech_logs / tech_backup / positions / candidates / applications / ai_screen / settings / stats / export
+  services/   security（bcrypt+JWT）、state_machine（7 阶段推进/撤回）、pdf、llm、prompt（提示词与回答容错）、ai_screen（录入编排）、summary（阶段×岗位交叉表）、positions（暂不招岗位统一排除）、export、views、settings、accounts（候选人手机号账号）、phone、ratelimit、log_service、file_service（文件校验/入库）、form_service（表单模板/答卷）、portal_apply（候选人投递 AI 首筛）、portal_views（候选人白名单序列化）、backup_service（ZIP 备份）
 ```
 
 约定（详见设计文档 v3.5）：
@@ -93,16 +93,18 @@ backend/app/
 frontend/src/
   main.js        总开关：Element Plus、图标、路由、主题
   App.vue        根组件：el-config-provider 中文语言
-  api/http.js    axios 实例：自动带 token、401 自动跳登录、错误统一弹中文提示
-  api/index.js   每个后端接口包成一个函数
-  stores/auth.js 登录状态（token + 用户），localStorage 持久化
-  router/index.js 路由 + 守卫：未登录访问后台 → /login
-  layouts/AdminLayout.vue 后台布局：左菜单 + 顶栏（5 个速览数字 + 主题切换）
-  views/         登录 / 注册 / 岗位管理 / 候选人管理 / 投递列表 / 投递详情 / 汇总导出 / 系统设置 / AI录入弹窗
+  api/http.js    HR 端 axios：自动带 token、401 跳 /login、错误统一弹中文
+  api/portalHttp.js 候选人端 axios：独立 token、401 跳 /portal/login
+  api/techHttp.js   技术端 axios：独立 token、401 跳 /tech/login
+  api/index.js   HR 端接口封装；api/portal.js 候选人端接口封装；api/tech.js 技术端接口封装
+  stores/auth.js HR 登录状态；portalAuth.js 候选人；techAuth.js 技术管理员（三套 token 分开存）
+  router/index.js 路由 + 三端守卫：HR / 候选人 / 技术管理员各走各的登录页
+  layouts/AdminLayout.vue HR 后台布局；PortalLayout.vue 候选人端（移动优先 + 底部导航）；TechLayout.vue 技术管理端
+  views/         HR 页面（候选人抽屉含文件/表单/投递；投递列表带来源；表单模板页）；views/portal/ 候选人端页面；views/tech/ 技术端页面
   theme.js + styles/theme.css  三档主题：白天 / 黑夜(Element dark) / 护眼(米黄)，localStorage 保持
-  constants.js   8 阶段 / 状态 / 结果的中文名单 + 阶段色阶映射（照后端数据字典）
-  components/StageTag.vue  阶段色标：3px 竖色条按关卡加深，密集表格里也能扫出进度
-  styles/theme.css         设计变量层：三主题（白天青碧/黑夜/护眼墨绿）、阶段色阶、字阶/间距/圆角
+  styles/portal.css  候选人端卡片、时间线、表单操作栏等移动端样式
+  constants.js   7 阶段 / 状态 / 结果的中文名单 + 阶段色阶映射（照后端数据字典）
+  components/StageTag.vue HR 阶段色标；PortalStageBar.vue 候选人进度条；PortalFormRenderer.vue 通用表单渲染
 ```
 
 ## 进度
@@ -115,5 +117,12 @@ frontend/src/
 - [x] 周报增强：阶段×岗位交叉汇总表（口径=通过该关或正停在该关，格子可点看名单）、进行中候选人所处阶段清单（阶段多选筛选+手动改写）、招聘周报双表导出、候选人搜索与详情（2026-09-17）
 - [x] 岗位「暂不招」隐藏：行内开关 + 显示筛选，隐藏后岗位及其投递从统计/列表/AI/导出彻底排除（2026-09-17）
 - [x] 投递详情可改候选人姓名（纠正 AI 认错的名字，重名需确认，不影响投递进度）（2026-09-17）
+- [x] v3.15 候选人端：三角色权限、手机号登录、只读简历、可配置表单、投递 + AI 首筛、移动优先界面（2026-10-24）
+- [x] v3.15 HR 适配 + 技术管理端：文件/表单/来源、表单模板、账号、AI 配置、日志、备份、概览（2026-10-24）
+- [x] v3.15 测试与文档：367 项断言、部署/备份恢复文档、seed_demo（2026-10-24）
+- [x] v3.16 表单链路顺手化：候选人端文件页直列表单点行即达填写页；HR 模板去「用途」单选 + 只读预览；注册页对齐候选人登录视觉（2026-10-24）
+- [x] v3.16 Offer 文件与候选人回传：三类文件上传→随通知发送后可见，候选人回传签署件（法律效力确认），HR 标记「已回传」（2026-10-25）
+- [x] v3.16 候选人通知：通过关卡/入职按富文本模板生成草稿，逐人编辑 + 发送前预览，正文自动附 Offer 文件清单；候选人没手机号不能发送（前端提醒失败 + 后端 400 拦截），补上后可重试（2026-10-25）
+- [x] v3.16 体验顺手化：个人信息改弹窗、三端头像、各关记录滑动选关就地编辑、投递详情标签页、通用申请表、表单可见阶段设置（2026-10-25）
 - [x] 前端视觉大改版：管线主视觉 + 阶段色标 + 阶段轨筛选 + 招聘漏斗 + 设计变量层与三主题（2026-09-21）
 - [ ] M5 收尾打包
