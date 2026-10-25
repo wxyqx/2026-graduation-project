@@ -30,7 +30,7 @@
 | 层 | 技术 |
 | :--- | :--- |
 | 后端 | Python 3.11 · FastAPI 0.115 · SQLAlchemy 2 · Uvicorn |
-| 数据库 | MySQL 8（utf8mb4），13 张表（v3.15：三角色 + 文件 + 表单 + 日志；v3.16：候选人通知） |
+| 数据库 | MySQL 8（utf8mb4），14 张表（v3.15：三角色 + 文件 + 表单 + 日志；v3.16：候选人通知 + 阶段负责人） |
 | 前端 | Vue 3 · Element Plus · Vite · Vue Router · axios |
 | 认证 | passlib(bcrypt) 哈希密码 + JWT（python-jose）；三角色 `candidate / hr / admin`，候选人用手机号登录 |
 | AI 筛选 | PyMuPDF 解析 PDF + httpx 调用用户自配的 OpenAI 兼容 LLM API |
@@ -136,8 +136,20 @@ npm run dev
 服务启动后，可跑一遍自动化体检（脚本会自动清理测试数据）：
 
 ```bash
+**一键全量测试（推荐）**：自动重建独立测试库 `ats_test`（**完全不碰真实库**）、起独立测试服务（8001 端口）、依次跑全部脚本：
+
+```bash
 cd ats/backend
-.venv\Scripts\python scripts\smoke_test.py http://127.0.0.1:8000       # 原 HR 全接口 + 状态机（186 项）
+.venv\Scripts\python scriptsun_all_tests.py    # 汇总 7 套脚本结果，退出码 0=全绿
+```
+
+push / PR 到 main 会自动触发 GitHub Actions 跑同一套测试（.github/workflows/tests.yml）。
+
+也可以单独跑某一套（默认连 8001 端口的测试服务；数据库用环境变量 `ATS_DB_NAME` 指定）：
+
+```bash
+cd ats/backend
+.venv\Scripts\python scripts\smoke_test.py http://127.0.0.1:8001       # HR 全接口 + 状态机
 .venv\Scripts\python scripts\stage1_role_test.py                      # 三角色权限矩阵（30 项）
 .venv\Scripts\python scripts\portal_smoke_test.py                     # 候选人账号/登录（31 项）
 .venv\Scripts\python scripts\stage3_smoke_test.py                     # 文件 + 表单（45 项）
@@ -151,14 +163,14 @@ cd ats/backend
 
 ## 数据库设计
 
-13 张表（v3.15 三角色 + 文件 + 表单 + 日志，v3.16 增候选人通知）：
+14 张表（v3.15 三角色 + 文件 + 表单 + 日志；v3.16 增候选人通知与阶段负责人）：
 
 | 表 | 说明 |
 | :--- | :--- |
-| `Candidate` | 候选人基础信息；`phone` 是候选人端登录账号，为空时通知不能发送 |
+| `Candidate` | 候选人基础信息；`phone` 是候选人端登录账号；`owner_id` 负责人 HR（能编辑全部关卡） |
 | `Position` | 招聘岗位（含「暂不招」隐藏标记 `is_hidden`） |
 | `Application` | 核心业务表：投递关系，记录 7 阶段结果与时间戳；`source` 标记来源 |
-| `User` | 三角色账号：`candidate` 候选人 / `hr` HR / `admin` 技术管理员；含头像 LONGBLOB |
+| `User` | 三角色账号：`candidate` 候选人 / `hr` HR / `admin` 技术管理员；HR/管理员实名与手机号必填，含头像 LONGBLOB |
 | `AI_API_Config` | LLM API 配置，可多个同时启用 |
 | `App_Setting` | 键值对设置项（AI 提示词、周报阶段文案、通知模板、表单可见阶段） |
 | `Candidate_File` | 候选人文件（HR 上传、候选人只读，BLOB 入库） |
@@ -168,8 +180,9 @@ cd ats/backend
 | `Form_Submission` | 表单答卷（草稿 / 已提交） |
 | `Form_Answer` | 表单答案（一个字段一行） |
 | `Operation_Log` | 操作日志（登录、账号、配置、导出、备份） |
+| `Stage_Owner` | 投递的阶段负责人（首次编辑该关的 HR 自动认领，只能编辑本关） |
 
-> 老库升级：先执行 [migrate_v3.15_three_portal.sql](step/StepO/migrate_v3.15_three_portal.sql)，再按文件名顺序执行 v3.16 的五个增量脚本（`migrate_v3.16_*.sql`：候选人通知、简历摘录字段、通知草稿、Offer 发送时间、头像）；回滚见 [rollback_v3.15_three_portal.sql](step/StepO/rollback_v3.15_three_portal.sql)。
+> 老库升级：先执行 [migrate_v3.15_three_portal.sql](step/StepO/migrate_v3.15_three_portal.sql)，再按文件名顺序执行 v3.16 的九个增量脚本（`migrate_v3.16_*.sql`：候选人通知、简历摘录字段、通知草稿、Offer 发送时间、头像、HR 手机号、HR 实名、销号恢复时间、阶段负责人）；回滚见 [rollback_v3.15_three_portal.sql](step/StepO/rollback_v3.15_three_portal.sql)。
 
 **7 阶段枚举**（`current_stage`）：`ai` AI筛选 → `resume` 简历筛选 → `phone` 电话沟通 → `test` 笔试 → `pro` 专业面 → `hr` HR面 → `final` 终面。
 **每关结果**（`result`）：`pass` 通过 / `fail` 淘汰。**全局状态**（`overall_status`）：`pending` 进行中 / `pass` 已录用 / `fail` 已淘汰。
@@ -206,6 +219,11 @@ cd ats/backend
 - [x] v3.16 表单链路顺手化：候选人端文件页直列表单、模板只读预览、通用申请表（不绑岗位）、表单可见阶段设置
 - [x] v3.16 Offer 文件与候选人回传（法律效力确认）、个人信息弹窗、三端头像、各关记录就地编辑
 - [x] v3.16 候选人通知：通过关卡/入职富文本模板、发送前预览、Offer 文件清单随附；没手机号不能发送（前端提醒 + 后端拦截）
+- [x] v3.16 HR 手机号强制：注册 / 个人信息 / 技术端建号必填手机号，存量账号与候选人已批量补编并开通登录
+- [x] v3.16 HR 实名强制：同三处必填实名，顶栏优先显示实名；存量 HR 已编占位姓名
+- [x] v3.16 淘汰通知与销号：淘汰即按模板发通知，2 天保留期内登录弹窗可见，超期登录被拦（拦截信息含淘汰说明）并销号
+- [x] v3.16 销号数据保存 3 个月：销号只停用不删数据，技术管理端保存期内可一键恢复账号（超期不可恢复）
+- [x] v3.16 HR 负责人体系：候选人负责人（默认建档/录简历 HR）管全局，阶段负责人只管本关，技术管理端可单个/批量变更负责人
 - [ ] M5 收尾打包（可选：Docker / 单文件启动）
 
 ## 说明
