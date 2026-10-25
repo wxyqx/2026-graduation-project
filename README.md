@@ -185,7 +185,7 @@ cd ats/backend
 | `Operation_Log` | 操作日志（登录、账号、配置、导出、备份） |
 | `Stage_Owner` | 投递的阶段负责人（首次编辑该关的 HR 自动认领，只能编辑本关） |
 
-> 老库升级：先执行 [migrate_v3.15_three_portal.sql](step/StepO/migrate_v3.15_three_portal.sql)，再按文件名顺序执行 v3.16 的十个增量脚本（`migrate_v3.16_*.sql`：候选人通知、简历摘录字段、通知草稿、Offer 发送时间、头像、HR 手机号、HR 实名、销号恢复时间、阶段负责人、默认密码强提示）；回滚见 [rollback_v3.15_three_portal.sql](step/StepO/rollback_v3.15_three_portal.sql)。
+> 老库升级：先执行 [migrate_v3.15_three_portal.sql](step/StepO/migrate_v3.15_three_portal.sql)，再按文件名顺序执行 v3.16 的十个 SQL 增量脚本（`migrate_v3.16_*.sql`），最后 `alembic stamp 5426ffbad99f && alembic upgrade head`（迁移链已含 Email_Outbox）；**此后所有表结构变更走 Alembic**：`cd ats/backend && alembic revision --autogenerate -m "xxx" && alembic upgrade head`。
 
 **7 阶段枚举**（`current_stage`）：`ai` AI筛选 → `resume` 简历筛选 → `phone` 电话沟通 → `test` 笔试 → `pro` 专业面 → `hr` HR面 → `final` 终面。
 **每关结果**（`result`）：`pass` 通过 / `fail` 淘汰。**全局状态**（`overall_status`）：`pending` 进行中 / `pass` 已录用 / `fail` 已淘汰。
