@@ -366,7 +366,7 @@ DOCS_I18N_SCRIPT = """
     "RegisterIn": "注册请求", "LoginIn": "登录请求", "TokenOut": "登录返回（含 token）", "UserOut": "用户信息",
     "PositionIn": "新建岗位", "PositionUpdate": "编辑岗位", "PositionOut": "岗位信息",
     "CandidateIn": "新建候选人", "CandidateUpdate": "改备注", "CandidateOut": "候选人信息",
-    "ApplicationCreate": "新建投递", "AdvanceIn": "推进一关", "RevertIn": "撤回",
+    "ApplicationApplyIn": "新建投递", "AdvanceIn": "推进一关", "RevertIn": "撤回",
     "AiConfigIn": "新建 AI 配置", "AiConfigUpdate": "编辑 AI 配置", "AiConfigOut": "AI 配置信息",
     "ExportFilters": "导出筛选条件", "ExportIn": "导出请求",
     "HTTPValidationError": "参数校验错误", "ValidationError": "单条校验错误",

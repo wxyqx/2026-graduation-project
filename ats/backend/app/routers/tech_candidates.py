@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_admin
-from app.models import Application, Candidate, Position, StageOwner, User
+from app.models import Candidate, Position, User
 from app.services.log_service import log_action
 from app.services.state_machine import STAGE_LABELS, STAGES
 
@@ -41,7 +41,7 @@ class OwnerSetIn(BaseModel):
 
 
 class StageOwnersIn(BaseModel):
-    """整条投递的各关负责人：{stage: HR 编号或 null(清空)}。一次提交整份，后端逐关落地。"""
+    """整个岗位的各关负责人：{stage: HR 编号或 null(清空)}。一次提交整份，后端逐关落地。"""
     owners: dict[str, int | None] = Field(description='各关负责人，如 {"phone": 3, "resume": null}')
 
 
@@ -127,91 +127,137 @@ def set_owner(
 
 @router.get("/stage-owners")
 def list_stage_owners(
-    keyword: str | None = Query(default=None, description="候选人姓名 / 手机号 / 岗位名关键字"),
+    keyword: str | None = Query(default=None, description="岗位名关键字"),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_admin),
 ):
-    """投递清单 + 各关负责人（关卡负责人调整页用）。"""
-    stmt = (
-        select(Application, Candidate, Position)
-        .join(Candidate, Application.can_id == Candidate.id)
-        .join(Position, Application.pos_id == Position.id)
-        .order_by(Application.id.desc())
-    )
+    """岗位清单 + 各关的岗位级负责人（关卡负责人调整页用）。
+
+    负责人按「岗位 × 关卡」指派，对该岗位全部候选人的对应关生效；
+    个别投递若已被 HR 首次编辑自动认领，以投递级记录为准（这里看不到、也不覆盖）。
+    """
+    from app.models import PositionStageOwner
+
+    stmt = select(Position).order_by(Position.id.desc())
     if keyword and keyword.strip():
-        like = f"%{keyword.strip()}%"
-        stmt = stmt.where(
-            (Candidate.name.like(like)) | (Candidate.phone.like(like)) | (Position.position_name.like(like))
-        )
-    rows = db.execute(stmt.limit(200)).all()
-    app_ids = [r[0].id for r in rows]
-    so_rows = (
+        stmt = stmt.where(Position.position_name.like(f"%{keyword.strip()}%"))
+    positions = db.scalars(stmt).all()
+    pos_ids = [p.id for p in positions]
+    owner_rows = (
         db.execute(
-            select(StageOwner.application_id, StageOwner.stage, User.id, User.real_name, User.username)
-            .join(User, StageOwner.user_id == User.id, isouter=True)
-            .where(StageOwner.application_id.in_(app_ids))
+            select(PositionStageOwner.pos_id, PositionStageOwner.stage, User.id, User.real_name, User.username)
+            .join(User, PositionStageOwner.user_id == User.id, isouter=True)
+            .where(PositionStageOwner.pos_id.in_(pos_ids), PositionStageOwner.user_id.isnot(None))
         ).all()
-        if app_ids
+        if pos_ids
         else []
     )
     owners: dict[int, dict] = {}
-    for app_id, stage, uid, real, username in so_rows:
-        owners.setdefault(app_id, {})[stage] = {
-            "user_id": uid,
-            "name": (real or username) if uid else None,
-        }
+    for pos_id, stage, uid, real, username in owner_rows:
+        owners.setdefault(pos_id, {})[stage] = {"user_id": uid, "name": real or username}
     return {
         "options": _hr_options(db),
         "stages": [{"value": st, "label": STAGE_LABELS[st]} for st in STAGES],
         "items": [
             {
-                "id": a.id,
-                "candidate_name": c.name,
-                "phone": c.phone,
+                "id": p.id,
                 "position_name": p.position_name,
-                "current_stage": a.current_stage,
-                "overall_status": a.overall_status,
-                "stage_owners": owners.get(a.id, {}),
+                "is_hidden": p.is_hidden,
+                "stage_owners": owners.get(p.id, {}),
             }
-            for a, c, p in rows
+            for p in positions
         ],
     }
 
 
-@router.put("/stage-owners/{app_id}")
+@router.put("/stage-owners/{pos_id}")
 def set_stage_owners(
-    app_id: int, body: StageOwnersIn, db: Session = Depends(get_db), current: User = Depends(get_current_admin)
+    pos_id: int, body: StageOwnersIn, db: Session = Depends(get_db), current: User = Depends(get_current_admin)
 ):
-    """整份设置一条投递的各关负责人：有 HR 编号的写入/更新，null 的清除认领记录。"""
-    a = db.get(Application, app_id)
-    if a is None:
-        raise HTTPException(status_code=404, detail="投递不存在")
+    """整份设置一个岗位的各关负责人（对该岗位全部候选人生效）：有 HR 编号的写入/更新，null 的清除。"""
+    from app.models import PositionStageOwner
+
+    p = db.get(Position, pos_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="岗位不存在")
     for stage, uid in body.owners.items():
         if stage not in STAGES:
             raise HTTPException(status_code=400, detail=f"{stage} 不是合法阶段值")
-        if uid is not None:
-            u = db.get(User, uid)
-            if u is None or u.role != "hr" or getattr(u, "is_active", 1) != 1:
-                raise HTTPException(status_code=400, detail="负责人必须是启用中的 HR")
+        _check_owner(db, uid)
     changed = 0
     for stage, uid in body.owners.items():
         row = db.scalar(
-            select(StageOwner).where(StageOwner.application_id == app_id, StageOwner.stage == stage)
+            select(PositionStageOwner).where(PositionStageOwner.pos_id == pos_id, PositionStageOwner.stage == stage)
         )
         if uid is None:
             if row is not None:
                 db.delete(row)
                 changed += 1
         elif row is None:
-            db.add(StageOwner(application_id=app_id, stage=stage, user_id=uid, update_time=datetime.now()))
+            db.add(PositionStageOwner(pos_id=pos_id, stage=stage, user_id=uid, update_time=datetime.now()))
             changed += 1
         elif row.user_id != uid:
             row.user_id = uid
             row.update_time = datetime.now()
             changed += 1
     log_action(
-        db, current, "update", target_type="application", target_id=app_id,
-        detail={"stage_owners_changed": True, "owners": body.owners},
+        db, current, "update", target_type="position", target_id=pos_id,
+        detail={"position_stage_owners_changed": True, "owners": body.owners},
     )
     db.commit()
     return {"changed": changed}
+
+
+@router.delete("/candidates/{can_id}/purge")
+def purge_candidate(
+    can_id: int,
+    confirm: bool = Query(description="必须显式传 true；用于响应候选人行使删除权（PIPL 删除权工具）"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_admin),
+):
+    """彻底删除候选人（物理删除，不可恢复；v3.17 P1-13 数据删除权工具）
+
+**与 HR 端「删除候选人」的区别**：那个是业务删除（档案+投递级联删除，但仍在备份里）；
+本接口是**合规工具**——响应候选人行使删除权时，由技术管理员物理清除其全部数据：
+档案、投递、答卷与答案、通知、文件 BLOB、登录账号。**操作前请先确认已有可用备份**
+（备份 → 恢复演练通过），删除后只能从备份找回。
+
+**怎么填**：网址带候选人编号，`confirm=true` 必带。
+
+**可能出错**：404 候选人不存在。
+"""
+    from app.models import Candidate as Cand
+
+    if not confirm:
+        raise HTTPException(status_code=400, detail="必须显式传 confirm=true 才能彻底删除")
+    c = db.get(Cand, can_id)
+    if c is None:
+        raise HTTPException(status_code=404, detail="候选人不存在")
+    detail = {"purged": True, "name": c.name, "phone": c.phone}
+    # 应用层显式物理删除（真实库部分外键无 CASCADE，靠顺序删）：答案→答卷→文件→通知→关负责人→投递→档案→账号
+    from app.models import (
+        Application,
+        CandidateFile,
+        CandidateNotice,
+        FormAnswer,
+        FormSubmission,
+        StageOwner,
+    )
+
+    db.query(FormAnswer).filter(
+        FormAnswer.submission_id.in_(select(FormSubmission.id).where(FormSubmission.candidate_id == can_id))
+    ).delete(synchronize_session=False)
+    db.query(FormSubmission).filter(FormSubmission.candidate_id == can_id).delete(synchronize_session=False)
+    db.query(CandidateFile).filter(CandidateFile.candidate_id == can_id).delete(synchronize_session=False)
+    db.query(CandidateNotice).filter(CandidateNotice.candidate_id == can_id).delete(synchronize_session=False)
+    app_ids = db.scalars(select(Application.id).where(Application.can_id == can_id)).all()
+    if app_ids:
+        db.query(StageOwner).filter(StageOwner.application_id.in_(app_ids)).delete(synchronize_session=False)
+    db.query(Application).filter(Application.can_id == can_id).delete(synchronize_session=False)
+    u = db.scalar(select(User).where(User.candidate_id == can_id))
+    db.delete(c)
+    if u is not None:
+        db.delete(u)
+    log_action(db, current, "delete", target_type="candidate", target_id=can_id, detail=detail)
+    db.commit()
+    return {"purged": can_id, "name": detail["name"]}

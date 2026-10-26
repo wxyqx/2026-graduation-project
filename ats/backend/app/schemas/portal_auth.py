@@ -30,6 +30,7 @@ class PortalCandidateOut(BaseModel):
     phone: str | None = Field(description="手机号（登录账号）")
     email: str | None = Field(description="邮箱")
     create_time: datetime | None = Field(description="建档时间")
+    consent_time: datetime | None = Field(default=None, description="同意《隐私政策与 AI 筛选告知》的时间；NULL=尚未同意")
 
 
 class PortalUserOut(BaseModel):

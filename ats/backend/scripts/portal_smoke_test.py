@@ -100,6 +100,13 @@ def main() -> int:
         check("默认密码登录：must_change_password=true", login1["user"]["must_change_password"] is True, str(login1["user"]))
         cand_token = login1["token"]
         C = {"Authorization": f"Bearer {cand_token}"}
+        # v3.17 P0-1：未同意隐私政策前，投递/填表/回传会被 403 拦——先同意
+        r = client.post("/api/portal/auth/privacy-consent", headers=C)
+        check("同意隐私政策", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+        r = client.get("/api/portal/auth/privacy-policy", headers=C)
+        check("政策版本可读", r.status_code == 200 and r.json().get("version"), r.text[:150])
+        r = client.post("/api/portal/applications", headers=C, json={"pos_id": 999999})
+        check("同意后门卫放行（404=岗位不存在，不再是 403 同意拦截）", r.status_code == 404, f"{r.status_code}")
 
         r = client.get("/api/portal/auth/me", headers=C)
         check("/me 返回自己", r.status_code == 200 and r.json()["candidate"]["id"] == c1["id"], r.text[:200])

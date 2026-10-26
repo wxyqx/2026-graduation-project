@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_candidate
+from app.core.deps import get_current_candidate, require_candidate_consent
 from app.models import User
 from app.schemas.form import FormAnswersIn
 from app.services import form_service
@@ -81,7 +81,7 @@ def save_my_form(
     body: FormAnswersIn,
     application_id: int | None = Query(default=None, description="岗位申请表必须传；个人资料表不传"),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_candidate),
+    user: User = Depends(require_candidate_consent),
 ):
     """保存草稿或提交答卷
 

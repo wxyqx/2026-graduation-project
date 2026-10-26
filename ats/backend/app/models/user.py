@@ -41,6 +41,8 @@ class User(Base):
     # 淘汰销号后的恢复时间：技术管理员在保存期（3 个月）内恢复账号时写入；
     # 晚于某次淘汰时间的恢复记录会让那次淘汰不再拦截登录
     restore_time: Mapped[datetime | None] = mapped_column(DateTime)
+    # 强制下线线（v3.17 P1-17）：改密/重置密码时置为当前时间，签发早于它的 token 全部失效
+    token_valid_after: Mapped[datetime | None] = mapped_column(DateTime)
     last_login_time: Mapped[datetime | None] = mapped_column(DateTime)
     last_login_ip: Mapped[str | None] = mapped_column(String(45))  # IPv6 最长 45 字符
     # 头像：直接存库；NULL=未设置（前端显示用户名首字占位）

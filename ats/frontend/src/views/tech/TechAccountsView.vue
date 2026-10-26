@@ -93,6 +93,22 @@ async function toggleStatus(row) {
   await load()
 }
 
+// ---- 彻底删除候选人（v3.17 P1-13 数据删除权工具）：物理清除档案/投递/答卷/通知/文件/账号，不可恢复 ----
+async function purgeCandidate(row) {
+  try {
+    await ElMessageBox.confirm(
+      `将【物理删除】候选人「${row.name}」的全部数据：档案、投递、答卷、通知、文件与登录账号，删除后不可恢复，只能靠备份找回。请确认已具备可用备份，且该操作是响应候选人本人行使删除权。`,
+      '彻底删除（不可恢复）',
+      { type: 'error', confirmButtonText: '我已确认，彻底删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  await techAccountApi.purgeCandidate(row.candidate_id)
+  ElMessage.success(`「${row.name}」的全部数据已彻底删除`)
+  await load()
+}
+
 async function resetPassword(row) {
   try {
     await ElMessageBox.confirm(
@@ -187,6 +203,9 @@ function isSelf(row) {
               {{ row.is_active ? '停用' : row.close_reason === 'eliminated' ? '恢复账号' : '启用' }}
             </el-button>
             <el-button link type="primary" @click="resetPassword(row)">重置密码</el-button>
+            <el-button v-if="row.role === 'candidate' && row.candidate_id" link type="danger" @click="purgeCandidate(row)">
+              彻底删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

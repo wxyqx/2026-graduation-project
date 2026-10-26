@@ -45,18 +45,30 @@ def create_access_token(user_id: int, role: str | None = None) -> str:
     exp（expire） ：过期时间——候选人 30 天，其余 7 天（都在 .env 里配）
     """
     days = settings.portal_token_expire_days if role == "candidate" else settings.token_expire_days
-    expire = datetime.now(UTC) + timedelta(days=days)
-    payload = {"sub": str(user_id), "exp": expire}
+    now = datetime.now(UTC)
+    expire = now + timedelta(days=days)
+    # iat（issued at）：签发时间。配 User.token_valid_after 可让改密/重置后旧 token 全部失效（强制下线）。
+    # 另存 iat_ms（毫秒精度）：秒级 iat 无法区分「同一秒内先签的旧票」和「改密响应里刚签发的新票」，
+    # 会导致用户改完密码立刻被自己踢下线——强制下线判定一律用 iat_ms。
+    payload = {"sub": str(user_id), "exp": expire, "iat": now, "iat_ms": int(now.timestamp() * 1000)}
     if role:
         payload["role"] = role
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def decode_token(token: str) -> int | None:
-    """验证通行证。合格就返回里面的用户编号；假的 / 改过的 / 过期的一律返回 None。"""
+def decode_token(token: str) -> tuple[int, int | None] | None:
+    """验证通行证。合格返回 (用户编号, 签发时间毫秒)；假的 / 改过的 / 过期的一律返回 None。
+
+    签发时间优先取 iat_ms（毫秒）；旧票只有秒级 iat，按「该秒末尾」折算，宁可放过 1 秒也不误杀。
+    都缺返回 None，调用方按「不校验」处理。
+    """
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])  # 验章 + 检查过期
-        return int(payload["sub"])
+        iat_ms = payload.get("iat_ms")
+        if iat_ms is None:
+            iat = payload.get("iat")
+            iat_ms = (int(iat) + 1) * 1000 if iat is not None else None  # 旧票：按该秒末尾算
+        return int(payload["sub"]), (int(iat_ms) if iat_ms is not None else None)
     except (JWTError, KeyError, ValueError):
         # JWTError：章不对或过期；KeyError：里面没有 sub；ValueError：sub 不是数字
         return None

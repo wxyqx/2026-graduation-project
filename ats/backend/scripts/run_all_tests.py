@@ -38,6 +38,7 @@ SCRIPTS = [
     ("stage5 生命周期与负责人", ["scripts/stage5_lifecycle_test.py"]),
     ("stage6 邮件通知", ["scripts/stage6_email_test.py"]),
     ("mock_llm AI录入", ["scripts/mock_llm_test.py", BASE]),
+    ("stage7 v3.17新功能", ["scripts/stage7_v317_test.py"]),
 ]
 
 

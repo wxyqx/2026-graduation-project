@@ -148,8 +148,8 @@ def main() -> int:
         s2.commit()
         HRB_ID = hr_b.id
         s2.close()
-        c.put(f"/api/tech/candidate-owners/stage-owners/{APP}", headers=TM,
-              json={"owners": {"test": HRB_ID}})
+        c.put(f"/api/tech/candidate-owners/stage-owners/{pos.id}", headers=TM,
+              json={"owners": {"test": HRB_ID}})  # v3.17：关卡负责人按岗位指派，对该岗位全部投递生效
 
         r = c.get(f"/api/applications/{APP}/notices", headers=H)
         # phone 关 pass 会自动生成草稿；直接生成一条草稿并发送

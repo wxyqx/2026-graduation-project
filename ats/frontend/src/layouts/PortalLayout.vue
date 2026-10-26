@@ -116,6 +116,44 @@ async function submitPwdPrompt() {
   }
 }
 
+// ---- 隐私政策与 AI 筛选告知：未同意前弹窗锁住整个候选人端，同意后才能投递/填表/回传 ----
+const consentVisible = ref(false)
+const consentPolicy = ref({ version: '', text: '' })
+const consentChecked = ref(false)
+const consentBusy = ref(false)
+
+async function openConsentIfNeeded() {
+  const c = portalAuth.candidate.value
+  if (!c || c.consent_time) {
+    consentVisible.value = false
+    return
+  }
+  try {
+    const data = await portalAuthApi.privacyPolicy()
+    consentPolicy.value = { version: data.version, text: data.text || '' }
+    consentChecked.value = false
+    consentVisible.value = true
+  } catch {
+    /* 拉不到政策就不弹，接口层另有 403 兜底 */
+  }
+}
+
+async function submitConsent() {
+  if (!consentChecked.value) {
+    ElMessage.warning('请先勾选「我已阅读并同意」')
+    return
+  }
+  consentBusy.value = true
+  try {
+    await portalAuthApi.consentPrivacy()
+    await refreshMe()
+    consentVisible.value = false
+    ElMessage.success('已同意，可继续使用')
+  } finally {
+    consentBusy.value = false
+  }
+}
+
 const navItems = [
   { name: 'portal-positions', label: '岗位', icon: 'Briefcase', to: '/portal/positions' },
   { name: 'portal-applications', label: '投递', icon: 'Tickets', to: '/portal/applications' },
@@ -148,8 +186,9 @@ function onUserCommand(command) {
 
 onMounted(() => {
   loadNotices()
-  refreshMe()
   loadStats()
+  // 先拿到候选人资料（含 consent_time），再决定是否弹隐私政策同意
+  refreshMe().then(openConsentIfNeeded)
   noticeTimer = window.setInterval(loadNotices, 60_000)
 })
 
@@ -282,6 +321,27 @@ watch(
       <template #footer>
         <el-button @click="pwdPromptVisible = false">稍后再说</el-button>
         <el-button type="primary" :loading="pwdPromptBusy" @click="submitPwdPrompt">修改密码</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 隐私政策与 AI 筛选告知：未同意前锁住整个候选人端（PIPL 告知-同意） -->
+    <el-dialog
+      v-model="consentVisible"
+      title="隐私政策与 AI 筛选告知"
+      width="640px"
+      :close-on-click-modal="false"
+      :close-on-escape="false"
+      :show-close="false"
+    >
+      <div class="consent-text">{{ consentPolicy.text }}</div>
+      <el-checkbox v-model="consentChecked" class="consent-check">
+        我已阅读并理解上述内容，同意按所述方式处理我的个人信息
+      </el-checkbox>
+      <template #footer>
+        <el-button @click="portalAuth.clear(); $router.replace({ name: 'portal-login' })">不同意并退出</el-button>
+        <el-button type="primary" :disabled="!consentChecked" :loading="consentBusy" @click="submitConsent">
+          同意并继续
+        </el-button>
       </template>
     </el-dialog>
 
@@ -544,6 +604,22 @@ watch(
     width: 100%;
     padding: var(--ats-sp-6);
   }
+}
+
+/* ---- 隐私政策同意弹窗：文案区可滚动，勾选后才放行 ---- */
+.consent-text {
+  max-height: 45vh;
+  overflow-y: auto;
+  padding: var(--ats-sp-3);
+  border-radius: var(--ats-radius);
+  background: var(--el-fill-color-lighter);
+  font-size: var(--ats-fs-body);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  color: var(--el-text-color-regular);
+}
+.consent-check {
+  margin-top: var(--ats-sp-3);
 }
 
 /* ---- 通过关卡通知弹窗：加宽、一条一条完整铺开，不在弹窗里滚动 ---- */

@@ -3,16 +3,9 @@
 投递的「返回数据」比较复杂（要带候选人、岗位、7 阶段时间线），
 所以没写成 pydantic 类，而是在 services/views.py 里用函数拼成字典返回。这里只有「进来的数据」。
 """
+from datetime import datetime
+
 from pydantic import BaseModel, Field
-
-
-class ApplicationCreate(BaseModel):
-    """手动新建一条投递：谁（can_id）投了哪个岗位（pos_id）。"""
-
-    can_id: int = Field(description="候选人编号。先去 candidates 新建一个候选人，返回里的 id 就是它")
-    pos_id: int = Field(description="岗位编号。先去 positions 新建一个岗位，返回里的 id 就是它")
-
-    model_config = {"json_schema_extra": {"examples": [{"can_id": 1, "pos_id": 1}]}}
 
 
 class AdvanceIn(BaseModel):
@@ -92,3 +85,9 @@ class StageNoteIn(BaseModel):
             ]
         }
     }
+
+    # ---- 乐观锁（v3.17 P1-5）：带上前端读到的 update_time，被别人先改过则 409；确认覆盖带 force=true ----
+    expected_update_time: datetime | None = Field(
+        default=None, alias="expectedUpdateTime", description="前端读到的投递更新时间；不匹配且未带 force 时返回 409"
+    )
+    force: bool = Field(default=False, description="冲突确认后强制覆盖")

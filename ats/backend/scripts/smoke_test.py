@@ -93,6 +93,9 @@ def run():
     check(c.put("/api/auth/profile", headers=H, json={"username": ua, "current_password": pw, "new_password": "newsecret456", "phone": "13700000001", "real_name": "测试HR"}).status_code == 200, "改密码 200")
     check(c.post("/api/auth/login", json={"username": ua, "password": pw}).status_code == 401, "旧密码失效 401")
     check(c.post("/api/auth/login", json={"username": ua, "password": "newsecret456", "phone": "13700000001", "real_name": "测试HR"}).status_code == 200, "新密码可登录")
+    # v3.17 P1-17 强制下线：改密后旧 token 已失效，换用新 token 继续（前端同款行为）
+    H = {"Authorization": f"Bearer {c.post('/api/auth/login', json={'username': ua, 'password': 'newsecret456'}).json()['token']}"}
+    check(c.get("/api/auth/me", headers=H).status_code == 200, "改密后新 token 可用")
 
     print("== HR 登录限流")
     rl_user = f"rl_{STAMP}"
@@ -130,14 +133,14 @@ def run():
     check(c.put(f"/api/candidates/{c1}", headers=H, json={"remark": "改备注"}).json()["remark"] == "改备注", "更新备注")
 
     print("== applications + 状态机")
-    r = c.post("/api/applications", headers=H, json={"can_id": c1, "pos_id": p1})
+    r = c.post(f"/api/candidates/{c1}/applications", headers=H, json={"pos_id": p1})
     check(r.status_code == 201, "创建投递 201")
     a1 = r.json()["id"]; created["applications"].append(a1)
     d = r.json()
-    check(d["current_stage"] == "ai" and d["overall_status"] == "pending" and len(d["stages"]) == 7, "初始 ai/pending/7 阶段")
-    check(c.post("/api/applications", headers=H, json={"can_id": c1, "pos_id": p1}).status_code == 409, "重复投递 409")
-    check(c.post("/api/applications", headers=H, json={"can_id": 999999, "pos_id": p1}).status_code == 404, "候选人不存在 404")
-    r = c.post("/api/applications", headers=H, json={"can_id": c2, "pos_id": p2})
+    check(d["current_stage"] == "resume" and d["overall_status"] == "pending" and len(d["stages"]) == 7 and d["stages"][0]["result"] == "pass", "手动建档默认过 AI：从 resume 开始（v3.17 前已定）")
+    check(c.post(f"/api/candidates/{c1}/applications", headers=H, json={"pos_id": p1}).status_code == 409, "重复投递 409")
+    check(c.post(f"/api/candidates/{999999}/applications", headers=H, json={"pos_id": p1}).status_code == 404, "候选人不存在 404")
+    r = c.post(f"/api/candidates/{c2}/applications", headers=H, json={"pos_id": p2})
     a2 = r.json()["id"]; created["applications"].append(a2)
     lst = c.get("/api/applications", headers=H, params={"pos_id": p1}).json()
     check([x["id"] for x in lst] == [a1] and lst[0]["candidate_name"] == f"张三_{STAMP}", "按岗位筛选 + 带候选人名")
@@ -154,9 +157,9 @@ def run():
     def rev(aid, to=None):
         return c.post(f"/api/applications/{aid}/revert", headers=H, json={"toStage": to} if to else {})
 
-    check(adv(a1, "resume", "pass").status_code == 409, "fromStage 不匹配 409")
-    check(adv(a1, "ai", "maybe").status_code == 400, "result 非法 400")
-    check(rev(a1).status_code == 400, "ai 阶段 pending 不可撤回 400")
+    check(adv(a1, "ai", "pass").status_code == 409, "fromStage 不匹配 409（手动建档默认已在 resume）")
+    check(adv(a1, "resume", "maybe").status_code == 400, "result 非法 400")
+    check(rev(a1).status_code == 200, "从 resume 撤回 → 退回 ai 关重新可筛")
     d = adv(a1, "ai", "pass").json()
     check(d["current_stage"] == "resume" and d["ai_result"] == "pass", "ai pass → resume")
     d = adv(a1, "resume", "pass").json()
@@ -214,15 +217,18 @@ def run():
     check(sn(a1, "test", reason="r", evaluation="e").status_code == 400, "笔试传面试评价 400")
     check(sn(a1, "ai", reason="x").status_code == 400, "ai 关不可手写 400")
     check(sn(a1, "nope", reason="x").status_code == 400, "非法 stage 400")
+    # a2 手动建档默认过 AI 已在 resume，改用 a2 撤回到 ai 后写 resume 记录应 400
+    rev(a2)
     check(sn(a2, "resume", reason="x").status_code == 400, "未进行阶段写记录 400")
     check(c.put(f"/api/applications/{a1}/stage-note", json={"stage": "pro", "reason": "x"}).status_code == 401, "未登录写记录 401")
 
     # 进行中的当前关也能先写（还没打分），但更靠后的关仍不可写
     r = c.post("/api/candidates", headers=H, json={"name": f"进行中记录_{STAMP}"})
     nc = r.json()["id"]; created["candidates"].append(nc)
-    r = c.post("/api/applications", headers=H, json={"can_id": nc, "pos_id": p2})
+    r = c.post(f"/api/candidates/{nc}/applications", headers=H, json={"pos_id": p2})
     na = r.json()["id"]; created["applications"].append(na)
-    d = adv(na, "ai", "pass").json()  # ai pass → 当前关 resume，且 resume 未打分
+    # 手动建档默认已停在 resume 且未打分（v3.17 前定），无需再推进 ai 关
+    d = c.get(f"/api/applications/{na}", headers=H).json()
     check(d["current_stage"] == "resume" and {s["stage"]: s for s in d["stages"]}["resume"]["result"] is None, "新投递推进后停在 resume（未打分）")
     r = sn(na, "resume", reason="进行中先记一笔，面试完再定")
     check(r.status_code == 200 and r.json()["stages"][1]["reason"] == "进行中先记一笔，面试完再定", "进行中的当前关可先写原因")
@@ -233,11 +239,11 @@ def run():
     check({s["stage"]: s for s in d["stages"]}["resume"]["reason"] == "进行中先记一笔，面试完再定", "推进后进行中写的记录保留")
     # 但撤回该关会把它清掉
     d = rev(na).json()
-    check({s["stage"]: s for s in d["stages"]}["resume"]["reason"] is None, "撤回后清掉（含进行中写下的）")
-    # 撤回该关 → 原因与面试评价一并清空
-    d = rev(a1).json()  # a1 现为 final/pass(已录用)，撤回 → final/pending，清 final 记录
+    # v3.17 P1-11：撤回只回退流程，原因 / 面试评价**保留**（重过这关可继续改，不再"评价陪葬"）
+    check({s["stage"]: s for s in d["stages"]}["resume"]["reason"] == "进行中先记一笔，面试完再定", "撤回后保留进行中写下的记录（P1-11）")
+    d = rev(a1).json()  # a1 现为 final/pass(已录用)，撤回 → final/pending，成绩清空
     st = {s["stage"]: s for s in d["stages"]}
-    check(st["final"]["reason"] is None and st["final"]["evaluation"] is None, "撤回该关 → 原因与面试评价清空")
+    check(st["final"]["result"] is None and st["final"]["reason"] is not None, "撤回清成绩但保留原因/评价（P1-11）")
     d = adv(a1, "final", "pass").json()  # 再通过终面，恢复「已录用」状态，供后面用例
 
     print("== 岗位删除限制")
@@ -282,7 +288,7 @@ def run():
     check(not any(x["pos_id"] == p1 for x in after_ov["by_position"]), "按岗位统计不含暂不招岗位")
     after_mx = c.get("/api/stats/matrix", headers=H, params={"range": "all"}).json()
     check(len(after_mx["positions"]) == len(before_mx["positions"]) - 1, "交叉表少一列")
-    check(c.post("/api/applications", headers=H, json={"can_id": c1, "pos_id": p1}).status_code == 400, "往暂不招岗位建投递 400")
+    check(c.post(f"/api/candidates/{c1}/applications", headers=H, json={"pos_id": p1}).status_code == 400, "往暂不招岗位建投递 400")
     check(c.get("/api/stats/matrix/cell", headers=H, params={"row": "test", "pos_id": p1}).status_code == 400, "暂不招岗位的格子 400")
     check(c.put(f"/api/positions/{p1}", headers=H, json={"is_hidden": False}).json()["is_hidden"] is False, "恢复在招")
     check(len(c.get("/api/positions", headers=H).json()) == before_visible, "恢复后岗位数回来")
@@ -431,7 +437,7 @@ def run():
         """临时建候选人 + 投递，返回 (cand_id, app_id)。"""
         can = c.post("/api/candidates", headers=H, json={"name": name}).json()
         created["candidates"].append(can["id"])
-        ap = c.post("/api/applications", headers=H, json={"can_id": can["id"], "pos_id": pos_id}).json()
+        ap = c.post(f"/api/candidates/{can['id']}/applications", headers=H, json={"pos_id": pos_id}).json()
         created["applications"].append(ap["id"])
         return can["id"], ap["id"]
 
@@ -451,7 +457,7 @@ def run():
 
     # ① 面试环节被淘汰 → 计入面试行，且 state=rejected
     _, ap_rej = new_cand_app(f"面试淘汰_{STAMP}", p2)
-    push(ap_rej, ["ai", "resume", "phone", "test", "pro"], ["pass"] * 4 + ["fail"])
+    push(ap_rej, ["resume", "phone", "test", "pro"], ["pass", "pass", "pass", "fail"])
     cell = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "week"}).json()
     me = next((x for x in cell["people"] if x["app_id"] == ap_rej), None)
     check(me is not None and me["state"] == "rejected", "面试环节淘汰 → 面试行计入且 state=rejected")
@@ -459,7 +465,7 @@ def run():
     # ② 跨时间范围：专业面通过（回拨到去年）+ HR面本周被淘汰 → 本周仍计入（旧口径只看专业面，不会计入）
     #    用 HR 面淘汰（而非通过）来避开"停在终面等待"带来的干扰（等待也会用 update_time 计入本周）
     _, ap_cross = new_cand_app(f"跨范围_{STAMP}", p2)
-    push(ap_cross, ["ai", "resume", "phone", "test", "pro", "hr"], ["pass"] * 5 + ["fail"])
+    push(ap_cross, ["resume", "phone", "test", "pro", "hr"], ["pass"] * 4 + ["fail"])
     cur.execute("UPDATE application SET pro_time=%s WHERE ID=%s", (LAST_YEAR, ap_cross))
     conn.commit()
     cell2 = c.get("/api/stats/matrix/cell", headers=H, params={"row": "interview", "pos_id": p2, "range": "week"}).json()
@@ -477,13 +483,13 @@ def run():
     # ③ 同人三关都命中只算一次：按格子数字核对（本人只贡献 1）
     base_all, _ = interview_cell(p2, "all")
     _, ap_multi = new_cand_app(f"三关_{STAMP}", p2)
-    push(ap_multi, ["ai", "resume", "phone", "test", "pro", "hr", "final"], ["pass"] * 7)
+    push(ap_multi, ["resume", "phone", "test", "pro", "hr", "final"], ["pass"] * 6)
     after_all, _ = interview_cell(p2, "all")
     check(after_all - base_all == 1, f"三关都命中只 +1（{base_all} → {after_all}）")
 
     # ④ 对照组：笔试环节淘汰 **不**计入笔试行
     _, ap_test_fail = new_cand_app(f"笔试淘汰_{STAMP}", p2)
-    push(ap_test_fail, ["ai", "resume", "phone", "test"], ["pass"] * 3 + ["fail"])
+    push(ap_test_fail, ["resume", "phone", "test"], ["pass", "pass", "fail"])
     m_all = c.get("/api/stats/matrix", headers=H, params={"range": "all"}).json()
     check(any(r["key"] == "test" for r in m_all["rows"]), "交叉表含 test 行")
     check(any(p["id"] == p2 for p in m_all["positions"]), "交叉表含该岗位列")

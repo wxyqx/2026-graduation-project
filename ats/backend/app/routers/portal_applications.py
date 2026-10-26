@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings as app_settings
 from app.core.database import get_db
-from app.core.deps import get_current_candidate
+from app.core.deps import get_current_candidate, require_candidate_consent
 from app.models import Application, Position, User
 from app.schemas.portal import PortalApplyIn
 from app.services import (
@@ -59,7 +59,7 @@ def _own_or_404(db: Session, app_id: int, candidate_id: int) -> Application:
 async def apply(
     body: PortalApplyIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_candidate),
+    user: User = Depends(require_candidate_consent),
 ):
     """投递一个岗位（自动触发 AI 首筛）
 
@@ -132,7 +132,11 @@ async def apply(
     outcome = await portal_apply.screen_resume(db, position, resume.content)
     if outcome["result"] in sm.RESULTS:
         app.ai_comment = outcome["comment"]
-        sm.apply_result(app, "ai", outcome["result"], now)
+        if outcome["result"] == "pass":
+            sm.apply_result(app, "ai", "pass", now)
+        else:
+            # AI fail 不自动淘汰：记结果与理由，停在 ai 关等 HR 复核（v3.17 P0-2）
+            sm.record_ai_fail(app, now)
     else:
         # 降级：停在 AI 筛选关，等 HR 人工处理；理由只给 HR 看
         app.ai_comment = "候选人自主投递，AI 初筛未完成（未配置 / 简历无法解析 / 调用失败），请人工筛选"[:500]

@@ -35,6 +35,7 @@ from app.models.form_submission import FormAnswer, FormSubmission  # noqa: E402
 from app.models.form_template import FormField, FormTemplate  # noqa: E402
 from app.models.operation_log import OperationLog  # noqa: E402
 from app.models.position import Position  # noqa: E402
+from app.models.position_stage_owner import PositionStageOwner  # noqa: E402
 from app.models.stage_owner import StageOwner  # noqa: E402
 from app.models.user import User  # noqa: E402
 
@@ -55,5 +56,6 @@ __all__ = [
     "FormAnswer",
     "OperationLog",
     "StageOwner",
+    "PositionStageOwner",
     "EmailOutbox",
 ]

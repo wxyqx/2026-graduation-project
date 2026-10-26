@@ -9,13 +9,22 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { inject, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { applicationApi, candidateApi, formTemplateApi } from '../api'
+import { applicationApi, candidateApi, formTemplateApi, positionApi } from '../api'
+import { auth } from '../stores/auth'
 import { STAGE_LABEL, STATUS_LABEL, STATUS_TYPE } from '../constants'
 import PortalFormRenderer from '../components/PortalFormRenderer.vue'
+import AIIntakeDialog from './AIIntakeDialog.vue'
 import { fmtTime } from '../utils/format'
 
 const router = useRouter()
 const refreshStats = inject('refreshStats')
+
+// ---- AI 录入简历（从投递列表移过来）：录完建了新候选人/投递，刷新列表与统计 ----
+const intakeVisible = ref(false)
+function onIntakeClosed() {
+  load()
+  refreshStats?.()
+}
 
 const list = ref([])
 const loading = ref(false)
@@ -50,7 +59,9 @@ const editMode = ref('create')
 const editId = ref(null)
 const editRef = ref()
 const editSaving = ref(false)
-const editForm = reactive({ name: '', phone: '', email: '', remark: '' })
+const editForm = reactive({ name: '', phone: '', email: '', birth: '', remark: '' })
+// 乐观锁基准（v3.17 P1-5）：打开编辑时记下 update_time，保存时带回；被别人先改过则 409 提示覆盖
+const editBaseUpdateTime = ref(null)
 const editRules = {
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   phone: [
@@ -61,20 +72,70 @@ const editRules = {
   ],
 }
 
+// 新建时可顺手上传一份简历：只存进档案当当前简历，不走 AI 筛选（AI 录入才会）；
+// 选完文件立刻识别姓名/电话/邮箱/出生年月，自动填进下面还空着的输入框
+const newResume = ref(null)
+const newResumeInput = ref(null)
+const resumeParsing = ref(false)
+function pickNewResume() {
+  newResumeInput.value?.click()
+}
+async function onNewResumePicked(e) {
+  const f = e.target.files?.[0]
+  e.target.value = ''
+  if (!f) return
+  if (f.size > 10 * 1024 * 1024) {
+    ElMessage.warning('文件不能超过 10MB')
+    return
+  }
+  newResume.value = f
+  resumeParsing.value = true
+  try {
+    const r = await candidateApi.parseResume(f)
+    const filled = []
+    const put = (key, val) => {
+      if (val && !editForm[key]) {
+        editForm[key] = val
+        filled.push(key)
+      }
+    }
+    put('name', r.name)
+    put('phone', r.phone)
+    put('email', r.email)
+    put('birth', r.birth)
+    if (filled.length) ElMessage.success(`已从简历识别并填入：${filled.join('、')}，请核对`)
+    else ElMessage.info('简历已选择，没识别到可填的信息，请手动补充')
+  } catch {
+    /* 识别失败（扫描件等）拦截器已提示，简历仍会照常上传 */
+  } finally {
+    resumeParsing.value = false
+  }
+}
+
+// 新建时可顺便选个岗位，保存后直接为 TA 建一条投递（默认通过 AI 筛选）；不选就只建档案
+const newPosId = ref(null)
+const positionOptions = ref([])
+
 function openCreate() {
   editMode.value = 'create'
   editId.value = null
-  Object.assign(editForm, { name: '', phone: '', email: '', remark: '' })
+  Object.assign(editForm, { name: '', phone: '', email: '', birth: '', remark: '' })
+  editBaseUpdateTime.value = null
+  newResume.value = null
+  newPosId.value = null
+  positionApi.list().then((ps) => (positionOptions.value = ps.filter((p) => !p.is_hidden)))
   editVisible.value = true
 }
 
 function openEdit(row) {
   editMode.value = 'edit'
   editId.value = row.id
+  editBaseUpdateTime.value = row.update_time || null
   Object.assign(editForm, {
     name: row.name || '',
     phone: row.phone || '',
     email: row.email || '',
+    birth: row.birth || '',
     remark: row.remark || '',
   })
   editVisible.value = true
@@ -88,14 +149,45 @@ async function saveCandidate() {
       name: editForm.name.trim(),
       phone: editForm.phone.trim() || '',
       email: editForm.email.trim() || '',
+      birth: editForm.birth || '',
       remark: editForm.remark || null,
     }
-    const saved =
-      editMode.value === 'create'
-        ? await candidateApi.create(payload)
-        : await candidateApi.update(editId.value, payload)
-    ElMessage.success(editMode.value === 'create' ? '候选人已创建' : '资料已更新')
+    let saved
+    if (editMode.value === 'create') {
+      saved = await candidateApi.create(payload)
+    } else {
+      try {
+        saved = await candidateApi.update(editId.value, { ...payload, expectedUpdateTime: editBaseUpdateTime.value })
+      } catch (e) {
+        if (e.response?.status === 409 && /刚被/.test(e.response.data?.detail || '')) {
+          // 资料被其他 HR 先改过：确认后强制覆盖
+          await ElMessageBox.confirm(
+            '该候选人的资料刚被其他 HR 修改过。点「覆盖」将用你正在编辑的内容覆盖对方的修改。',
+            '资料有新改动',
+            { type: 'warning', confirmButtonText: '覆盖', cancelButtonText: '放弃我的修改' },
+          )
+          saved = await candidateApi.update(editId.value, { ...payload, expectedUpdateTime: null, force: true })
+        } else {
+          throw e
+        }
+      }
+    }
+    if (editMode.value === 'create' && newResume.value) {
+      await candidateApi.uploadFile(saved.id, newResume.value, 'resume')
+    }
+    if (editMode.value === 'create' && newPosId.value) {
+      await applicationApi.create(saved.id, newPosId.value)
+    }
+    if (editMode.value === 'create') {
+      ElMessage.success(
+        newPosId.value ? '候选人已创建，投递已建立（默认通过 AI 筛选）' : newResume.value ? '候选人已创建，简历已存入档案' : '候选人已创建',
+      )
+    } else {
+      ElMessage.success('资料已更新')
+    }
     editVisible.value = false
+    newResume.value = null
+    newPosId.value = null
     await load()
     if (detail.value && detail.value.id === editId.value) {
       detail.value = { ...detail.value, ...saved }
@@ -206,6 +298,44 @@ function submissionAnswers(sub) {
   return out
 }
 
+// ---- 移交主要负责人（v3.17 P0-4）：仅当前负责人可见可操作 ----
+const isMyCandidate = (row) => {
+  const me = auth.user.value
+  return me != null && (row.owner_id == null || row.owner_id === me.id)
+}
+const transferVisible = ref(false)
+const transferRow = ref(null)
+const transferForm = reactive({ owner_id: null })
+const transferSaving = ref(false)
+const transferOptions = ref([])
+
+async function openTransfer(row) {
+  transferRow.value = row
+  transferForm.owner_id = null
+  transferOptions.value = (await candidateApi.hrOptions()).filter((h) => h.id !== auth.user.value?.id)
+  transferVisible.value = true
+}
+
+async function submitTransfer() {
+  if (!transferForm.owner_id) {
+    ElMessage.warning('请选择新负责人')
+    return
+  }
+  transferSaving.value = true
+  try {
+    const r = await candidateApi.transferOwner(transferRow.value.id, transferForm.owner_id)
+    ElMessage.success(`已移交给「${r.owner_name}」，TA 成为主要负责人`)
+    transferVisible.value = false
+    await load()
+    if (detail.value && detail.value.id === transferRow.value.id) {
+      detail.value.owner_id = r.owner_id
+      detail.value.owner_name = r.owner_name
+    }
+  } finally {
+    transferSaving.value = false
+  }
+}
+
 // ---- 模板字段缓存：渲染同一份字段结构 ----
 const templateFieldsCache = new Map()
 
@@ -244,7 +374,7 @@ async function remove(row) {
   const tip = n > 0 ? `，以及他名下的 ${n} 条投递记录` : ''
   try {
     await ElMessageBox.confirm(
-      `将删除候选人「${row.name}」${tip}。此操作不可恢复，确定删除？`,
+      `将删除候选人「${row.name}」${tip}，其候选人端账号（${row.phone ? `手机号 ${row.phone}` : '如有'}）一并注销、立即无法登录。此操作不可恢复，确定删除？`,
       '删除候选人',
       { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' },
     )
@@ -265,6 +395,9 @@ async function remove(row) {
       <h2>候选人管理</h2>
       <div class="head-actions">
         <span class="muted">共 {{ list.length }} 人</span>
+        <el-button type="success" plain @click="intakeVisible = true">
+          <el-icon><MagicStick /></el-icon>&nbsp;AI 录入简历
+        </el-button>
         <el-button type="primary" @click="openCreate">
           <el-icon><Plus /></el-icon>&nbsp;新建候选人
         </el-button>
@@ -388,6 +521,7 @@ async function remove(row) {
                 <el-tag v-else type="warning" size="small" effect="plain">待补手机号</el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="邮箱">{{ detail.email || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="出生年月">{{ detail.birth || '—' }}</el-descriptions-item>
               <el-descriptions-item label="账号">
                 <el-tag :type="detail.has_account ? 'success' : 'info'" size="small" effect="plain">
                   {{ detail.has_account ? '已开通（默认密码 admin）' : '未开通' }}
@@ -398,6 +532,7 @@ async function remove(row) {
             </el-descriptions>
             <div class="drawer-actions">
               <el-button size="small" @click="openEdit(detail)">编辑资料</el-button>
+              <el-button v-if="isMyCandidate(detail)" size="small" @click="openTransfer(detail)">移交负责人</el-button>
             </div>
           </el-tab-pane>
 
@@ -534,8 +669,35 @@ async function remove(row) {
         <el-form-item label="邮箱">
           <el-input v-model="editForm.email" placeholder="可不填" />
         </el-form-item>
+        <el-form-item label="出生年月">
+          <el-date-picker
+            v-model="editForm.birth"
+            type="month"
+            value-format="YYYY-MM"
+            :editable="false"
+            placeholder="可不填"
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="editForm.remark" placeholder="如 内推 / 猎头推荐" />
+        </el-form-item>
+        <el-form-item v-if="editMode === 'create'" label="同时投递">
+          <el-select v-model="newPosId" clearable filterable placeholder="选择岗位（可选）" style="width: 100%">
+            <el-option v-for="p in positionOptions" :key="p.id" :label="p.position_name" :value="p.id" />
+          </el-select>
+          <div class="muted resume-hint">选了岗位会在保存后直接创建这条投递（默认通过 AI 筛选，从简历评估开始）</div>
+        </el-form-item>
+        <el-form-item v-if="editMode === 'create'" label="简历">
+          <div class="resume-pick">
+            <el-button :loading="resumeParsing" @click="pickNewResume">
+              {{ resumeParsing ? '识别中…' : '选择文件（可选）' }}
+            </el-button>
+            <span v-if="newResume" class="resume-name">{{ newResume.name }}</span>
+            <el-button v-if="newResume" link type="danger" @click="newResume = null">移除</el-button>
+          </div>
+          <input ref="newResumeInput" type="file" hidden @change="onNewResumePicked" />
+          <div class="muted resume-hint">选了简历会自动识别姓名、电话、邮箱、出生年月并填入下面表单</div>
         </el-form-item>
       </el-form>
       <el-alert
@@ -548,6 +710,23 @@ async function remove(row) {
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
         <el-button type="primary" :loading="editSaving" @click="saveCandidate">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- AI 录入简历：批量上传 PDF，AI 认人、配岗、打分、建档建投递（从投递列表页移到这里） -->
+    <AIIntakeDialog :visible="intakeVisible" @close="onIntakeClosed" />
+
+    <!-- 移交主要负责人：新负责人接管全部编辑权，操作写日志 -->
+    <el-dialog v-model="transferVisible" :title="`移交主要负责人：${transferRow?.name || ''}`" width="440px" destroy-on-close>
+      <p class="muted" style="margin-top: 0">
+        移交后「{{ transferRow?.name }}」由新负责人全权负责（编辑全部关卡与资料），你将失去编辑权（除非你仍是某关的协助负责人）。操作会记入日志。
+      </p>
+      <el-select v-model="transferForm.owner_id" filterable placeholder="选择新负责人" style="width: 100%">
+        <el-option v-for="h in transferOptions" :key="h.id" :label="h.name" :value="h.id" />
+      </el-select>
+      <template #footer>
+        <el-button @click="transferVisible = false">取消</el-button>
+        <el-button type="primary" :loading="transferSaving" @click="submitTransfer">确认移交</el-button>
       </template>
     </el-dialog>
   </div>
@@ -596,6 +775,19 @@ async function remove(row) {
 }
 .edit-tip {
   margin-top: var(--ats-sp-2);
+}
+.resume-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--ats-sp-2);
+  min-width: 0;
+}
+.resume-name {
+  font-size: var(--ats-fs-note);
+  color: var(--el-text-color-regular);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 表格里的姓名：打开抽屉是「动作」而不是「导航」，所以用 button 而不是 <a>。 */

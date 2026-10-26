@@ -7,15 +7,25 @@ import { fmtTime } from '../../utils/format'
 const data = ref(null)
 const loading = ref(false)
 
+// 磁盘/库体积告警（v3.17 P1-15）：BLOB 膨胀与磁盘占满是最可预期的死法
+const storage = ref(null)
+
 async function load() {
   loading.value = true
   try {
     data.value = await techOverviewApi.get()
+    try {
+      storage.value = await techOverviewApi.storage()
+    } catch {
+      storage.value = null
+    }
   } finally {
     loading.value = false
   }
 }
 onMounted(load)
+
+const STORAGE_LEVEL_TEXT = { ok: '', warn: '备份盘剩余空间不足 20%，建议清理', danger: '备份盘剩余空间不足 10%，备份可能失败，请立即清理' }
 
 function fmtBytes(n) {
   if (!n && n !== 0) return '—'
@@ -90,6 +100,16 @@ const ACTION_LABEL = {
           <div class="stat-label">录用 / 淘汰</div>
           <div class="stat-num">{{ data.business.pass }} / {{ data.business.fail }}</div>
           <div class="stat-sub">全部投递的终局</div>
+        </div>
+        <div class="ats-panel stat-card">
+          <div class="stat-label">磁盘余量（备份盘）</div>
+          <div class="stat-num" :style="storage && storage.level !== 'ok' ? 'color: var(--el-color-' + (storage.level === 'danger' ? 'danger' : 'warning') + ')' : ''">
+            {{ storage ? fmtBytes(storage.backup_free_bytes) : '—' }}
+          </div>
+          <div class="stat-sub">
+            {{ storage ? `库占 ${fmtBytes(storage.db_size_bytes)}（BLOB ${fmtBytes(storage.file_blob_bytes)}·${storage.file_count} 份）` : '' }}
+            <span v-if="storage && STORAGE_LEVEL_TEXT[storage.level]">{{ STORAGE_LEVEL_TEXT[storage.level] }}</span>
+          </div>
         </div>
       </div>
 

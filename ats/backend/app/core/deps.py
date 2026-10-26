@@ -40,13 +40,22 @@ def get_current_user(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise unauthorized
 
-    user_id = decode_token(credentials.credentials)
-    if user_id is None:
+    decoded = decode_token(credentials.credentials)
+    if decoded is None:
         raise unauthorized
+    user_id, iat = decoded
 
     user = db.get(User, user_id)
     if user is None:
         raise unauthorized
+
+    # 强制下线（v3.17 P1-17）：改密 / 重置密码后，签发早于基准线的 token 全部失效。
+    # 毫秒精度比较：改密响应里刚签发的新票（同一秒内）不会被误杀。
+    # token 无签发时间（极旧票）视为「非常早」，同样拦下——持有者重新登录即可。
+    if user.token_valid_after is not None:
+        issued_ms = iat if iat is not None else 0
+        if issued_ms < int(user.token_valid_after.timestamp() * 1000):
+            raise unauthorized
 
     # 停用账号：即使 token 还没过期也不让继续用
     if getattr(user, "is_active", 1) == 0:
@@ -92,4 +101,24 @@ def get_current_candidate(
         if blocked:
             db.commit()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=blocked)
+    return user
+
+
+def require_candidate_consent(
+    user: User = Depends(get_current_candidate),
+    db: Session = Depends(get_db),
+) -> User:
+    """隐私政策门卫：候选人未同意《隐私政策与 AI 筛选告知》前，禁止投递 / 填表 / 回传。
+
+    PIPL 的告知-同意环节（v3.17 P0-1）；读取类接口不受限，写个人信息才拦。
+    """
+    from app.models import Candidate
+
+    if user.candidate_id:
+        c = db.get(Candidate, user.candidate_id)
+        if c is not None and c.consent_time is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="请先阅读并同意《候选人个人信息处理与 AI 筛选告知书》（页面弹窗勾选后即可继续）",
+            )
     return user

@@ -223,3 +223,52 @@ def list_email_outbox(
         }
         for r in rows
     ]
+
+
+class PrivacyPolicyIn(BaseModel):
+    """政策文案更新请求。"""
+
+    text: str = Field(min_length=1, description="《隐私政策与 AI 筛选告知书》全文（Markdown/纯文本均可）")
+
+
+@router.get("/privacy-policy")
+def get_privacy(db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """当前《隐私政策与 AI 筛选告知书》文案与版本（候选人端投递/填表/回传前的同意依据）"""
+    from app.services import settings as settings_svc
+
+    return settings_svc.get_privacy_policy(db)
+
+
+@router.put("/privacy-policy")
+def set_privacy(body: PrivacyPolicyIn, db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """保存政策文案（版本号自动按保存时间生成；已同意的候选人不用重签，新同意记录引用新版本）"""
+    from app.services import settings as settings_svc
+
+    try:
+        return settings_svc.set_privacy_policy(db, body.text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
+class AppealContactIn(BaseModel):
+    """申诉联系方式更新请求。"""
+
+    text: str = Field(default="", max_length=500, description="申诉联系方式文案；空 = 恢复默认")
+
+
+@router.get("/appeal-contact")
+def get_appeal(db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """淘汰申诉联系方式（通知模板 {申诉联系方式} 占位符的取值）"""
+    from app.services import settings as settings_svc
+
+    return {"text": settings_svc.get_appeal_contact(db)}
+
+
+@router.put("/appeal-contact")
+def set_appeal(body: AppealContactIn, db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """保存淘汰申诉联系方式（留空恢复默认文案）"""
+    from app.services import settings as settings_svc
+
+    return {"text": settings_svc.set_appeal_contact(db, body.text)}
+

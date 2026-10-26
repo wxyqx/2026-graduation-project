@@ -9,16 +9,18 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_hr
-from app.models import Application, Candidate, User
+from app.models import Application, Candidate, Position, User
 from app.schemas.candidate import CandidateIn, CandidateOut, CandidateUpdate
 from app.services import accounts, ownership
+from app.services.log_service import log_action
 from app.services.phone import is_valid_phone, normalize_phone
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"], dependencies=[Depends(get_current_hr)])
@@ -32,6 +34,7 @@ def _out(c: Candidate, count: int = 0, has_account: bool = False) -> CandidateOu
         name=c.name,
         phone=c.phone,
         email=c.email,
+        birth=c.birth,
         remark=c.remark,
         onboard_date=c.onboard_date,
         school=c.school,
@@ -42,6 +45,7 @@ def _out(c: Candidate, count: int = 0, has_account: bool = False) -> CandidateOu
         hire_type=c.hire_type,
         work_experience=c.work_experience,
         create_time=c.create_time,
+        update_time=c.update_time,
         application_count=count,
         has_account=has_account,
     )
@@ -158,6 +162,7 @@ def create_candidate(
         name=body.name,
         phone=phone,
         email=(body.email or "").strip() or None,
+        birth=(body.birth or "").strip() or None,
         remark=body.remark,
         owner_id=user.id,  # 默认负责人 = 建档的 HR
         create_time=now,
@@ -172,7 +177,160 @@ def create_candidate(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="手机号已被其他候选人使用")
     db.refresh(c)
+    log_action(db, user, "create", target_type="candidate", target_id=c.id, detail={"name": c.name, "phone": c.phone})
     return _out(c, 0, accounts.get_candidate_user(db, c.id) is not None)
+
+
+@router.post("/parse-resume")
+async def parse_resume(
+    file: UploadFile = File(description="简历文件（PDF / Word 等，20MB 内）"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_hr),
+):
+    """识别简历里的姓名 / 电话 / 邮箱 / 出生年月（只识别，不建任何数据）
+
+**干什么用**：HR 手动建档 / 手动新建投递时上传简历，系统自动把姓名、电话、邮箱、出生年月填进表单，
+省去照着简历手敲。电话 / 邮箱用正则抽（稳定）；姓名 / 出生年月优先问 AI（需要已启用的 AI 配置），
+AI 不可用时姓名回退用文件名、出生年月回退用「出生」字样的正则。
+
+**返回什么**：`{"name", "phone", "email", "birth", "used_ai"}`，识别不到的字段为 null。
+
+**可能出错**：
+- 400：抠不出文字（扫描件）或文件读不出来——请换文本型 PDF 或手动填写
+- 413：文件超过 20MB
+"""
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件超过 20MB")
+    from app.services import pdf as pdf_svc
+    from app.services import resume_parse
+
+    try:
+        text = pdf_svc.extract_text(data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="文件读取失败，请换一份 PDF 或手动填写")
+    if len(text.strip()) < 30:
+        raise HTTPException(status_code=400, detail="无法从文件提取到文字（可能是扫描件），请手动填写")
+    return await resume_parse.parse_resume(db, text, file.filename or "")
+
+
+class ApplicationApplyIn(BaseModel):
+    """为候选人创建一条投递：投哪个岗位（pos_id）。"""
+
+    pos_id: int = Field(description="岗位编号")
+
+
+@router.post("/{can_id}/applications", status_code=status.HTTP_201_CREATED)
+def create_application(
+    can_id: Annotated[int, Path(description="候选人编号")],
+    body: ApplicationApplyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_hr),
+):
+    """为候选人新建一条投递（候选人管理页「同时投递」用的就是它）
+
+**干什么用**：不走 AI 录入、手动把「张三投了 Java 岗」记进系统。
+非 AI 录入的手动建档**默认通过 AI 筛选**（ai=pass，理由注明「人工建档，默认通过 AI 筛选」），
+投递直接从第二关 `resume`（简历筛选）开始。
+
+**怎么填**：网址里带候选人编号，`pos_id` 岗位编号。
+
+**返回什么**：完整投递详情（含 7 关时间线）。
+
+**可能出错**：
+- 404：候选人或岗位编号不存在
+- 409：这个人已经投过这个岗位了（同一人同一岗只能一条）
+- 400：岗位已设为暂不招
+
+**小知识**：想让某条手动投递回到 AI 关重新筛，用「撤回」退回 ai 关即可。
+"""
+    from app.services.state_machine import apply_result
+    from app.services.views import application_detail
+
+    _get_or_404(db, can_id)
+    pos = db.get(Position, body.pos_id)
+    if pos is None:
+        raise HTTPException(status_code=404, detail="岗位不存在")
+    if pos.is_hidden:
+        raise HTTPException(status_code=400, detail=f"「{pos.position_name}」已设为暂不招，不能建投递")
+    dup = db.scalar(
+        select(Application).where(Application.can_id == can_id, Application.pos_id == body.pos_id)
+    )
+    if dup:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该候选人已投递过此岗位")
+    now = datetime.now()
+    a = Application(
+        can_id=can_id,
+        pos_id=body.pos_id,
+        current_stage="ai",  # 先按第一关建，下面立即人工代替 AI 筛选
+        overall_status="pending",
+        create_time=now,
+        update_time=now,
+    )
+    # 手动建档默认通过 AI 筛选：不发通知（ai 关不在通知关卡里）、不占 AI 额度
+    a.ai_comment = "人工建档，默认通过 AI 筛选"
+    apply_result(a, "ai", "pass", now)
+    db.add(a)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该候选人已投递过此岗位")
+    db.refresh(a)
+    return application_detail(a, db)
+
+
+class OwnerTransferIn(BaseModel):
+    """移交主要负责人：新负责人 HR 编号。"""
+
+    owner_id: int = Field(description="新负责人 HR 编号（启用中的 HR，不能是自己）")
+
+
+@router.get("/hr-options")
+def hr_options(db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
+    """启用中的 HR 列表（负责人移交下拉用），按编号排序。"""
+    rows = db.scalars(select(User).where(User.role == "hr", User.is_active == 1).order_by(User.id)).all()
+    return [{"id": u.id, "name": u.real_name or u.username or f"#{u.id}"} for u in rows]
+
+
+@router.put("/{can_id}/owner")
+def transfer_owner(
+    can_id: Annotated[int, Path(description="候选人编号")],
+    body: OwnerTransferIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_hr),
+):
+    """移交主要负责人（v3.17 P0-4：解除"变更负责人必须找技术管理员"的人力单点）
+
+**谁能操作**：仅当前负责人本人；候选人还没负责人时，任何 HR 可认领（把自己设为负责人）。
+技术管理员仍可在技术端批量调整。
+
+**会发生什么**：新负责人接管该候选人的全部编辑权，原负责人失去（除非他仍是某关的协助负责人）；
+操作写日志。
+
+**可能出错**：
+- 403：你不是当前负责人
+- 400：新负责人不是启用中的 HR / 是你自己 / 已经是他负责
+"""
+    c = _get_or_404(db, can_id)
+    if c.owner_id is not None and c.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="只有当前负责人可以移交该候选人")
+    if body.owner_id == user.id:
+        raise HTTPException(status_code=400, detail="新负责人不能是自己")
+    if c.owner_id == body.owner_id:
+        raise HTTPException(status_code=400, detail="该候选人已经由这位 HR 负责")
+    u = db.get(User, body.owner_id)
+    if u is None or u.role != "hr" or getattr(u, "is_active", 1) != 1:
+        raise HTTPException(status_code=400, detail="新负责人必须是启用中的 HR")
+    old = c.owner_id
+    c.owner_id = body.owner_id
+    c.update_time = datetime.now()
+    log_action(
+        db, user, "update", target_type="candidate", target_id=can_id,
+        detail={"owner_transfer": {"from": old, "to": body.owner_id}},
+    )
+    db.commit()
+    return {"owner_id": c.owner_id, "owner_name": u.real_name or u.username}
 
 
 @router.get("/{can_id}", response_model=CandidateOut)
@@ -225,9 +383,17 @@ def update_candidate(
         ownership.ensure_can_edit_candidate(db, c, user)
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    # 乐观锁（v3.17 P1-5）：同上，两人同时改一位候选人的资料时后写者需确认
+    if body.expected_update_time is not None and not body.force and c.update_time and body.expected_update_time != c.update_time:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该候选人的资料刚被其他 HR 修改过；请刷新查看最新内容，或选择覆盖",
+        )
+
     # model_fields_set = 前端真正传了的字段集合。这样能区分「没传某个字段」和「传了但值是空」
     if "remark" in body.model_fields_set:
         c.remark = body.remark
+        c.update_time = datetime.now()
 
     # 手机号：改了立刻影响登录；清空 = 保留账号但再也登录不了
     if "phone" in body.model_fields_set:
@@ -254,7 +420,7 @@ def update_candidate(
         c.update_time = datetime.now()
 
     # HR 从简历摘录的个人信息：文本字段，填什么存什么，传空即清空
-    for f in ("onboard_date", "school", "degree", "major", "expected_salary", "work_location", "hire_type", "work_experience"):
+    for f in ("birth", "onboard_date", "school", "degree", "major", "expected_salary", "work_location", "hire_type", "work_experience"):
         if f in body.model_fields_set:
             setattr(c, f, (getattr(body, f) or "").strip() or None)
             c.update_time = datetime.now()
@@ -296,6 +462,7 @@ def update_candidate(
         select(func.count()).select_from(Application).where(Application.can_id == can_id), db
     )
     count = db.scalar(stmt) or 0
+    log_action(db, user, "update", target_type="candidate", target_id=can_id, detail={"profile_updated": True})
     return _out(c, count, accounts.get_candidate_user(db, can_id) is not None)
 
 

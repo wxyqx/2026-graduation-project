@@ -24,6 +24,7 @@ class Candidate(Base):
     name: Mapped[str | None] = mapped_column(String(255))  # 姓名
     phone: Mapped[str | None] = mapped_column(String(20), unique=True)  # 手机号：候选人端登录账号
     email: Mapped[str | None] = mapped_column(String(100))  # 邮箱（可空，仅展示，不做验证）
+    birth: Mapped[str | None] = mapped_column(String(20))  # 出生年月，如 1999-06（可空，仅展示）
     remark: Mapped[str | None] = mapped_column(String(500))  # 备注，比如「内推」「AI录入」
     # 负责人 HR：默认 = 建档 / 上传简历录入的 HR；技术管理员可单个或批量改。
     # 负责人能编辑该候选人的全部关卡；非负责人的 HR 只能编辑自己负责的关卡，其余只读
@@ -40,6 +41,9 @@ class Candidate(Base):
     hire_type: Mapped[str | None] = mapped_column(String(20))  # 招聘类型（校招/社招）
     work_experience: Mapped[str | None] = mapped_column(Text)  # 工作经历
     update_time: Mapped[datetime | None] = mapped_column(DateTime)  # 最近更新时间
+    # ---- 隐私政策与 AI 筛选告知的同意记录（PIPL 告知-同意）----
+    consent_time: Mapped[datetime | None] = mapped_column(DateTime)  # 同意时间；NULL = 尚未同意（投递/填表/回传被拦）
+    consent_version: Mapped[str | None] = mapped_column(String(50))  # 同意的政策文案版本
 
     # 负责人 HR（懒加载，只在用到时查）
     owner = relationship("User", foreign_keys=[owner_id])

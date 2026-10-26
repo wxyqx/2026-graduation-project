@@ -3,28 +3,36 @@
     顶部：按阶段 / 状态 / 岗位筛选
     表格：每条投递的候选人、岗位、当前阶段、整体状态、AI 结果
     行内操作：通过 / 淘汰（调 advance，fromStage 用这一行的当前阶段）、撤回（调 revert）、详情
-    右上角：手动新建投递（选候选人 + 选岗位；候选人可以现场新建）
-
-  「AI 录入简历」按钮属于 M4，这里先留位置。
+    新建投递在「候选人管理」：新建候选人时选岗位同时投递，或用 AI 录入简历
 -->
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { applicationApi, candidateApi, positionApi, statsApi } from '../api'
+import { applicationApi, positionApi, statsApi } from '../api'
 import { auth } from '../stores/auth'
 import { RESULT_LABEL, STAGES, STAGE_COLOR, STAGE_LABEL, STATUSES, STATUS_LABEL, STATUS_TYPE } from '../constants'
 
 // 终面通关（overall_status=pass）= 已入职，是流程之外的展示态，不是第 8 关
 const ONBOARD = { value: 'onboard', label: '已入职' }
 import { fmtTime } from '../utils/format'
-import AIIntakeDialog from './AIIntakeDialog.vue'
 import StageTag from '../components/StageTag.vue'
+import ApplicationDetailView from './ApplicationDetailView.vue'
 
 const router = useRouter()
 const route = useRoute()
 const refreshStats = inject('refreshStats')
+
+// ---- 详情抽屉：点「详情」不跳页，详情整页从右侧滑出（复用 ApplicationDetailView 的嵌入模式）----
+const detailVisible = ref(false)
+const detailId = ref('')
+const detailTab = ref('')
+function openDetail(row, tab = '') {
+  detailId.value = row.id
+  detailTab.value = tab
+  detailVisible.value = true
+}
 
 const SOURCE_LABEL = { admin: 'HR 手动', ai_intake: 'AI 录入', portal: '候选人投递' }
 const SOURCE_OPTIONS = [
@@ -185,68 +193,6 @@ function canRevert(row) {
   return !(row.current_stage === 'ai' && row.overall_status === 'pending')
 }
 
-// ---- 手动新建投递 ----
-const createVisible = ref(false)
-const createForm = reactive({ can_id: null, pos_id: null })
-const createRules = {
-  can_id: [{ required: true, message: '请选择候选人', trigger: 'change' }],
-  pos_id: [{ required: true, message: '请选择岗位', trigger: 'change' }],
-}
-const createRef = ref()
-const creating = ref(false)
-
-// 候选人下拉：输入姓名时去后端模糊搜
-const candidateOptions = ref([])
-const searching = ref(false)
-async function searchCandidates(keyword) {
-  searching.value = true
-  try {
-    candidateOptions.value = await candidateApi.list(keyword)
-  } finally {
-    searching.value = false
-  }
-}
-
-// 现场新建候选人（小表单，建好后自动选中）
-const newCandidate = reactive({ show: false, name: '', phone: '', remark: '' })
-async function addCandidate() {
-  if (!newCandidate.name.trim()) {
-    ElMessage.warning('请输入候选人姓名')
-    return
-  }
-  const c = await candidateApi.create({
-    name: newCandidate.name.trim(),
-    phone: newCandidate.phone.trim() || '',
-    remark: newCandidate.remark || null,
-  })
-  candidateOptions.value = [c, ...candidateOptions.value]
-  createForm.can_id = c.id
-  Object.assign(newCandidate, { show: false, name: '', phone: '', remark: '' })
-  ElMessage.success(`候选人「${c.name}」已创建`)
-}
-
-function openCreate() {
-  Object.assign(createForm, { can_id: null, pos_id: null })
-  Object.assign(newCandidate, { show: false, name: '', phone: '', remark: '' })
-  searchCandidates('')
-  createVisible.value = true
-}
-
-async function submitCreate() {
-  await createRef.value.validate()
-  creating.value = true
-  try {
-    await applicationApi.create(createForm.can_id, createForm.pos_id)
-    ElMessage.success('投递已创建，当前在 AI 筛选阶段')
-    createVisible.value = false
-    await load()
-    loadStageCounts()
-    refreshStats?.()
-  } finally {
-    creating.value = false
-  }
-}
-
 const hasFilter = computed(() => filters.stage || filters.status || filters.pos_id || filters.source)
 
 // ---- 阶段轨：7 关横排，各显示"当前卡在这一关的人数"，点一下即筛选 ----
@@ -268,30 +214,13 @@ const totalInPipeline = computed(() =>
 function toggleStage(stage) {
   filters.stage = filters.stage === stage ? '' : stage
 }
-
-// ---- AI 录入弹窗 ----
-const intakeVisible = ref(false)
-function onIntakeClosed() {
-  // AI 录完建了新投递，刷新列表、阶段轨与顶部统计
-  load()
-  loadPositions()
-  loadStageCounts()
-  refreshStats?.()
-}
 </script>
 
 <template>
   <div>
     <div class="page-header">
       <h2>投递列表</h2>
-      <div>
-        <el-button type="success" plain @click="intakeVisible = true">
-          <el-icon><MagicStick /></el-icon>&nbsp;AI 录入简历
-        </el-button>
-        <el-button type="primary" @click="openCreate">
-          <el-icon><Plus /></el-icon>&nbsp;手动新建投递
-        </el-button>
-      </div>
+      <div class="muted page-tip">新建投递请到「候选人管理」：新建候选人时选岗位同时投递，或用 AI 录入简历</div>
     </div>
 
     <!-- 阶段轨：7 关横排，色条按关卡加深；点一下筛选该关，再点取消 -->
@@ -371,12 +300,9 @@ function onIntakeClosed() {
     <el-table :data="list" v-loading="loading" border :row-style="{ height: '50px' }" class="ats-vlist" empty-text="这条筛选下还没有投递记录">
       <el-table-column label="候选人" min-width="120">
         <template #default="{ row }">
-          <router-link
-            class="cell-link"
-            :to="{ name: 'application-detail', params: { id: row.id } }"
-          >
+          <a class="cell-link" href="javascript:;" @click="openDetail(row)">
             {{ row.candidate_name }}
-          </router-link>
+          </a>
         </template>
       </el-table-column>
       <el-table-column prop="position_name" label="岗位" min-width="160" show-overflow-tooltip />
@@ -404,7 +330,7 @@ function onIntakeClosed() {
               type="warning"
               effect="light"
               class="notice-badge"
-              @click.stop="router.push({ name: 'application-detail', params: { id: row.id }, query: { tab: 'notices' } })"
+              @click.stop="openDetail(row, 'notices')"
             >
               通知×{{ row.pending_notices }}
             </el-tag>
@@ -450,70 +376,31 @@ function onIntakeClosed() {
             @click="advance(row, 'fail')"
           >淘汰</el-button>
           <el-button link :disabled="!canRevert(row)" @click="revert(row)">撤回</el-button>
-          <el-button link @click="router.push({ name: 'application-detail', params: { id: row.id } })">详情</el-button>
+          <el-button link @click="openDetail(row)">详情</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="createVisible" class="ats-dialog-narrow" title="手动新建投递" destroy-on-close>
-      <el-form ref="createRef" :model="createForm" :rules="createRules" label-width="80px">
-        <el-form-item label="候选人" prop="can_id">
-          <div class="candidate-row">
-            <el-select
-              v-model="createForm.can_id"
-              filterable
-              remote
-              :remote-method="searchCandidates"
-              :loading="searching"
-              placeholder="输入姓名搜索"
-              style="flex: 1"
-            >
-              <el-option v-for="c in candidateOptions" :key="c.id" :label="c.remark ? `${c.name}（${c.remark}）` : c.name" :value="c.id" />
-            </el-select>
-            <el-button @click="newCandidate.show = !newCandidate.show">{{ newCandidate.show ? '收起' : '＋新建' }}</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item v-if="newCandidate.show" label="">
-          <div class="new-candidate">
-            <el-input
-              v-model="newCandidate.name"
-              name="candidate-name"
-              autocomplete="off"
-              placeholder="姓名"
-              style="width: 120px"
-            />
-            <el-input
-              v-model="newCandidate.phone"
-              name="candidate-phone"
-              autocomplete="off"
-              placeholder="手机号（填了才能登录）"
-              maxlength="11"
-              style="width: 180px"
-            />
-            <el-input
-              v-model="newCandidate.remark"
-              name="candidate-remark"
-              autocomplete="off"
-              placeholder="备注（可不填）"
-              style="flex: 1"
-            />
-            <el-button type="primary" plain @click="addCandidate">创建</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="岗位" prop="pos_id">
-          <el-select v-model="createForm.pos_id" filterable placeholder="选择岗位" style="width: 100%">
-            <el-option v-for="p in positions" :key="p.id" :label="p.position_name" :value="p.id" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
-      </template>
-    </el-dialog>
 
-    <!-- AI 录入简历弹窗 -->
-    <AIIntakeDialog :visible="intakeVisible" @close="onIntakeClosed" />
+
+    <!-- 详情抽屉：从右侧滑出，复用投递详情整页（嵌入模式，隐藏「返回列表」） -->
+    <el-drawer
+      v-model="detailVisible"
+      direction="rtl"
+      size="60%"
+      :with-header="false"
+      destroy-on-close
+      class="detail-drawer"
+      @closed="load"
+    >
+      <ApplicationDetailView
+        v-if="detailId"
+        :key="detailId"
+        :application-id="detailId"
+        :initial-tab="detailTab"
+        embedded
+      />
+    </el-drawer>
   </div>
 </template>
 
@@ -601,12 +488,8 @@ function onIntakeClosed() {
 .toolbar-count {
   margin-left: auto;
 }
-
-.candidate-row,
-.new-candidate {
-  display: flex;
-  gap: 8px;
-  width: 100%;
+.page-tip {
+  font-size: var(--ats-fs-note);
 }
 
 /* 表格里的姓名链接：用真正的 <a>（router-link），可聚焦、支持 Ctrl/中键新开 */
@@ -626,5 +509,15 @@ function onIntakeClosed() {
 .notice-badge {
   margin-left: 6px;
   cursor: pointer;
+}
+
+/* 详情抽屉：teleport 到 body，scoped 管不到，用 :global 定制外观。
+   毛玻璃底用主题变量调透明度，三档主题（白天/黑夜/护眼）都成立 */
+:global(.el-drawer.detail-drawer) {
+  border-radius: 24px 0 0 24px;
+  /* 底色染得薄（35%），轻模糊（10px）：后面的列表轮廓清楚 */
+  background: color-mix(in srgb, var(--el-bg-color) 35%, transparent);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
 }
 </style>

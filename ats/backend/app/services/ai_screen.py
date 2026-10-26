@@ -242,13 +242,17 @@ def _persist(db: Session, item: IntakeItem, now: datetime, owner_id: int | None 
         create_time=now,
         update_time=now,
     )
-    sm.apply_result(app, "ai", result, now)  # pass → 进入第 2 关 resume；fail → 整体标记已淘汰
+    if result == "pass":
+        sm.apply_result(app, "ai", "pass", now)  # 进入第 2 关 resume
+    else:
+        # AI fail 不自动淘汰：只记结果与理由，停在 ai 关待人工复核（v3.17 P0-2 合规闸门）
+        sm.record_ai_fail(app, now)
     db.add(app)
     db.commit()
     db.refresh(app)
     item.application_id = app.id
     item.status = "ok"
-    item.message = "AI 筛选通过，已进入简历筛选阶段" if result == "pass" else "AI 筛选未通过，已标记淘汰"
+    item.message = "AI 筛选通过，已进入简历筛选阶段" if result == "pass" else "AI 初筛未通过，待人工复核后决定"
 
 
 async def run_intake(
@@ -294,13 +298,13 @@ async def run_intake(
             try:
                 item.text = extract_text(data)
             except PdfExtractError as e:
-                item.status, item.message = "extract_failed", str(e)
+                item.status, item.message = "extract_failed", f"{e}；扫描件无法自动识别，请手动建档（新建候选人时可上传简历存档）"
         items.append(item)
     for text in texts:
         item = IntakeItem(index=len(items), source="text", filename=None)
         t = (text or "").strip()
         if len(t) < 30:
-            item.status, item.message = "extract_failed", "文本过短，无法作为简历"
+            item.status, item.message = "extract_failed", "文本过短，无法作为简历（扫描件请手动建档）"
         else:
             item.text = t
         items.append(item)

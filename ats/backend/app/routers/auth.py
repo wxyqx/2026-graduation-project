@@ -12,7 +12,7 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -103,11 +103,14 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
     db.add(user)  # 放进小推车
     db.commit()  # 结账，真正写入数据库
     db.refresh(user)  # 重新读一遍，拿到数据库分配的 ID
+    # 注册即发 token，算首次登录，记下最近登录
+    user.last_login_time = datetime.now()
+    db.commit()
     return TokenOut(token=create_access_token(user.id, user.role), user=_user_out(user))
 
 
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, db: Session = Depends(get_db)):
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     """登录，换一张新的 token
 
 **干什么用**：已经注册过，token 过期了（7 天）或换了浏览器，来这里重新拿一张。
@@ -143,6 +146,10 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     if getattr(user, "is_active", 1) == 0:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已停用，请联系管理员")
     ratelimit.reset(key)  # 登录成功：清空失败记录
+    # 记最近登录（技术端账号管理页「最近登录」列的数据来源；与候选人端/技术端登录同一口径）
+    user.last_login_time = datetime.now()
+    user.last_login_ip = request.client.host if request.client else None
+    db.commit()
     return TokenOut(token=create_access_token(user.id, user.role), user=_user_out(user))
 
 
@@ -188,6 +195,7 @@ def update_profile(body: ProfileUpdateIn, db: Session = Depends(get_db), current
         if not body.current_password or not verify_password(body.current_password, current.password_hash):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前密码不正确")
         current.password_hash = hash_password(body.new_password)
+        current.token_valid_after = datetime.now()  # 旧 token 全部失效（强制下线）
 
     # 改用户名：查重时排除自己（新名字和自己的旧名字相同不算冲突）
     if body.username != current.username:

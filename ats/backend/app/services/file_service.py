@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import CandidateFile
+from app.models import Candidate, CandidateFile
 
 # 扩展名 → MIME 类型（白名单）
 ALLOWED_TYPES: dict[str, str] = {
@@ -77,6 +77,7 @@ def save_file(
     category: str,
     application_id: int | None,
     uploaded_by_role: str,
+    make_current: bool = True,
 ) -> CandidateFile:
     """保存一个文件。调用方负责校验候选人/投递归属，并 commit。"""
     if category not in CATEGORIES:
@@ -86,8 +87,11 @@ def save_file(
     if total_size(db, candidate_id) + len(data) > limit:
         raise FileTooLarge(f"每位候选人的文件总量不能超过 {settings.portal_file_total_mb}MB")
 
-    # 简历换新版本：旧版本保留但不再是 current
-    if category == "resume":
+    # 简历换新版本：旧版本保留但不再是 current（候选人自助上传的简历 make_current=False，挂起待 HR 确认）
+    if category == "resume" and make_current:
+        # 行锁串行化（v3.17 P0-3）：两人同时给同一候选人传简历时在这里排队，
+        # 锁到事务提交为止——保证任何时刻最多只有一条 is_current=1 的当前简历
+        db.execute(select(Candidate.id).where(Candidate.id == candidate_id).with_for_update())
         old = db.scalars(
             select(CandidateFile).where(
                 CandidateFile.candidate_id == candidate_id,
@@ -106,7 +110,7 @@ def save_file(
         mime_type=mime,
         size_bytes=len(data),
         content=data,
-        is_current=1,
+        is_current=1 if make_current else 0,
         uploaded_by_role=uploaded_by_role,
         upload_time=datetime.now(),
     )

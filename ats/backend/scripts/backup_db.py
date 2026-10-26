@@ -57,6 +57,27 @@ def rotate(keep: int) -> None:
         print(f"清理旧备份：{old.name}")
 
 
+# ---- 异地镜像（v3.17 P1-14）：设置环境变量 ATS_BACKUP_MIRROR 后，每次备份自动拷一份到该目录 ----
+# 用法（计划任务/启动脚本里）：set ATS_BACKUP_MIRROR=E:ts_backup_mirror
+import os
+import shutil
+
+MIRROR_DIR = os.environ.get("ATS_BACKUP_MIRROR", "").strip()
+
+
+def mirror_backup(dump_path: Path) -> None:
+    if not MIRROR_DIR:
+        return
+    dest = Path(MIRROR_DIR)
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(dump_path, dest / dump_path.name)
+    # 镜像目录同样保留最近 14 份
+    mirrors = sorted(dest.glob("ats_*.sql"))
+    for old in mirrors[:-14]:
+        old.unlink(missing_ok=True)
+    print(f"[mirror] 已复制到异地目录 {dest}")
+
+
 def main() -> int:
     user, pw, database = db_creds()
     dump = find_mysqldump()
@@ -80,6 +101,10 @@ def main() -> int:
         return 1
     rotate(KEEP)
     print(f"备份完成：{out.name}（{size / 1024:.0f} KB）")
+    try:
+        mirror_backup(out)
+    except Exception as e:  # 镜像失败不影响本地备份的有效性
+        print(f"[mirror] 复制失败：{e}")
     return 0
 
 

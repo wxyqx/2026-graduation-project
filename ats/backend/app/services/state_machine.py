@@ -74,7 +74,11 @@ def write_stage(app: Application, stage: str, result: str, now: datetime) -> Non
 
 
 def clear_stage(app: Application, stage: str) -> None:
-    """把某一关的成绩、时间、以及人工记的原因 / 面试评价全部擦掉（撤回时用）。ai 这关顺便把 AI 理由也擦掉。"""
+    """撤回时把某一关的成绩、时间擦掉（v3.17 P1-11：原因 / 面试评价**保留**）。
+
+    记录是 HR 花时间写的面试资产，撤回只是流程回退——文字留在原关，重过这关时可在此基础上
+    继续改，不再"点错一次、评价陪葬"。ai 关的 AI 理由照旧擦掉（重筛会重新生成）。
+    """
     result_field, time_field = STAGE_FIELDS[stage]
     if result_field:
         setattr(app, result_field, None)
@@ -82,12 +86,6 @@ def clear_stage(app: Application, stage: str) -> None:
         setattr(app, time_field, None)
     if stage == "ai":
         app.ai_comment = None
-    # 人工记录也一并清空：撤回这一关 = 这一关当没发生过，留下的原因/评价就成孤儿了
-    reason_field, evaluation_field = STAGE_NOTE_FIELDS.get(stage, (None, None))
-    if reason_field:
-        setattr(app, reason_field, None)
-    if evaluation_field:
-        setattr(app, evaluation_field, None)
 
 
 def stage_has_result(app: Application, stage: str) -> bool:
@@ -117,6 +115,9 @@ def save_stage_note(app: Application, stage: str, reason: str | None, evaluation
         setattr(app, reason_field, reason or None)
     if evaluation_field:
         setattr(app, evaluation_field, evaluation or None)
+    # 必须推进更新时间：它既是「最近改动」的展示依据，也是各关记录乐观锁的基准——
+    # 不推进的话锁永远拿同一个值比对，冲突永远检测不到（v3.17 收尾修复）
+    app.update_time = datetime.now()
 
 
 def apply_result(app: Application, stage: str, result: str, now: datetime) -> None:
@@ -202,3 +203,14 @@ def stage_timeline(app: Application) -> list[dict]:
             }
         )
     return items
+
+
+def record_ai_fail(app: Application, now: datetime) -> None:
+    """AI 初筛未通过时的记法（v3.17 P0-2）：只记结果与理由，**不自动淘汰**。
+
+    投递停在 ai 关、整体保持 pending，由 HR 复核后手动推进（人工代替 AI）或走淘汰确认流程——
+    算法不直接做就业决定，这是合规要求的最后一道人工闸门。
+    """
+    write_stage(app, "ai", "fail", now)
+    app.overall_status = "pending"
+    app.update_time = now

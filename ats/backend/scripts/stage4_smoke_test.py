@@ -115,7 +115,9 @@ def main() -> int:
             cid = rr.json()["id"]
             ids["candidates"].append(cid)
             lr = c.post("/api/portal/auth/login", json={"phone": phone, "password": "admin"})
-            return cid, {"Authorization": f"Bearer {lr.json()['token']}"}
+            ch = {"Authorization": f"Bearer {lr.json()['token']}"}
+            c.post("/api/portal/auth/privacy-consent", headers=ch)  # v3.17 P0-1：先同意再投递/填表
+            return cid, ch
 
         cand_a, A = new_candidate(f"阶段4甲{tag}", 1)
         cand_b, B = new_candidate(f"阶段4乙{tag}", 2)
@@ -188,7 +190,7 @@ def main() -> int:
         r = c.post("/api/portal/applications", headers=B, json={"pos_id": pos})
         check("乙投递成功", r.status_code == 201, r.text[:300])
         check("AI 不通过 → ai_fail", r.json()["screening"] == "ai_fail", str(r.json().get("screening")))
-        check("不通过 → 已淘汰", r.json()["application"]["overall_status"] == "fail", str(r.json()["application"].get("overall_status")))
+        check("不通过 → 待人工复核（不自动淘汰，v3.17 P0-2）", r.json()["application"]["overall_status"] == "pending" and r.json()["application"]["current_stage"] == "ai", str(r.json()["application"]))
         b_app = r.json()["application"]["id"]
         ids["applications"].append(b_app)
 

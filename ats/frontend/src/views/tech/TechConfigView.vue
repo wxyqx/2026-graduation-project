@@ -8,6 +8,47 @@ const list = ref([])
 const loading = ref(false)
 const helpVisible = ref(false)
 
+// ---- 隐私政策与 AI 筛选告知（候选人端投递/填表/回传前的同意依据）----
+const privacy = reactive({ version: '', text: '' })
+const privacySaving = ref(false)
+
+async function loadPrivacy() {
+  const d = await techConfigApi.getPrivacy()
+  privacy.version = d.version
+  privacy.text = d.text
+}
+
+async function savePrivacy() {
+  privacySaving.value = true
+  try {
+    const d = await techConfigApi.savePrivacy(privacy.text)
+    privacy.version = d.version
+    ElMessage.success('隐私政策已保存，新同意记录将引用新版本')
+  } finally {
+    privacySaving.value = false
+  }
+}
+
+// ---- 淘汰申诉联系方式（通知模板 {申诉联系方式} 占位符）----
+const appeal = reactive({ text: '' })
+const appealSaving = ref(false)
+
+async function loadAppeal() {
+  const d = await techConfigApi.getAppeal()
+  appeal.text = d.text
+}
+
+async function saveAppeal() {
+  appealSaving.value = true
+  try {
+    const d = await techConfigApi.saveAppeal(appeal.text)
+    appeal.text = d.text
+    ElMessage.success('申诉联系方式已保存')
+  } finally {
+    appealSaving.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -16,7 +57,11 @@ async function load() {
     loading.value = false
   }
 }
-onMounted(load)
+onMounted(() => {
+  load()
+  loadPrivacy()
+  loadAppeal()
+})
 
 // ---- SMTP 邮件配置（通知的邮件渠道）----
 const smtp = reactive({
@@ -183,6 +228,35 @@ async function remove(row) {
       </el-button>
     </div>
 
+    <!-- 隐私政策与 AI 筛选告知：候选人端投递/填表/回传前必须同意（PIPL 告知-同意） -->
+    <section class="ats-panel" style="margin-bottom: 16px">
+      <div class="card-header">
+        <span class="ats-panel-title" style="margin: 0">隐私政策与 AI 筛选告知</span>
+        <span class="muted">当前版本 {{ privacy.version || '—' }}</span>
+      </div>
+      <p class="muted" style="margin: 0 0 8px">
+        候选人首次登录会弹窗展示本文案，勾选同意后才能投递、填表、回传；保存即生成新版本号，已同意过的人不用重签。
+      </p>
+      <el-input v-model="privacy.text" type="textarea" :autosize="{ minRows: 8, maxRows: 16 }" />
+      <div style="margin-top: 10px">
+        <el-button type="primary" :loading="privacySaving" @click="savePrivacy">保存隐私政策</el-button>
+      </div>
+    </section>
+
+    <!-- 淘汰申诉联系方式：{申诉联系方式} 占位符取值 -->
+    <section class="ats-panel" style="margin-bottom: 16px">
+      <div class="card-header">
+        <span class="ats-panel-title" style="margin: 0">淘汰申诉联系方式</span>
+      </div>
+      <p class="muted" style="margin: 0 0 8px">
+        填入「系统设置 → 通过/淘汰通知模板」里的 {申诉联系方式} 占位符，随淘汰通知与登录拦截信息一起发给候选人；留空恢复默认文案。
+      </p>
+      <el-input v-model="appeal.text" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" maxlength="500" />
+      <div style="margin-top: 10px">
+        <el-button type="primary" :loading="appealSaving" @click="saveAppeal">保存申诉联系方式</el-button>
+      </div>
+    </section>
+
     <section class="ats-panel">
       <div class="card-header">
         <span class="ats-panel-title" style="margin: 0">AI 筛选 API</span>
@@ -280,6 +354,13 @@ async function remove(row) {
         这里写的是<b>筛选规则</b>——AI 判断简历通过与否时遵循的标准（岗位要求之外的额外标准）。
         它会用在 HR 的「AI 录入简历」和候选人自主投递里。
       </p>
+      <el-alert
+        type="warning"
+        show-icon
+        :closable="false"
+        style="margin-bottom: 10px"
+        title="合规提示：筛选规则不得包含年龄、性别、民族、院校出身等歧视性条件；AI 初筛结果仅作参考，录用决定必须由人工复核作出（AI 淘汰一律转人工确认）。"
+      />
       <el-input
         v-model="promptRules"
         type="textarea"

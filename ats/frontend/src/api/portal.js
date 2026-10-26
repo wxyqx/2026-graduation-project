@@ -9,6 +9,9 @@ export const portalAuthApi = {
   me: () => portalHttp.get('/auth/me'),
   changePassword: (current_password, new_password) =>
     portalHttp.put('/auth/password', { current_password, new_password }),
+  // 隐私政策与 AI 筛选告知：投递/填表/回传前必须同意（PIPL 告知-同意）
+  privacyPolicy: () => portalHttp.get('/auth/privacy-policy', { silent: true }),
+  consentPrivacy: () => portalHttp.post('/auth/privacy-consent'),
   // 头像：上传即替换；获取返回 blob（404 = 未设置，前端显示首字占位）
   updateAvatar: (file) => {
     const fd = new FormData()
@@ -51,6 +54,19 @@ export const portalFileApi = {
     a.remove()
     URL.revokeObjectURL(url)
   },
+  /** 预览用：只取原始响应（blob + content-type），由页面自己渲染成 PDF / 图片 */
+  blob(file) {
+    return portalHttp.get(`/files/${file.id}/download`, { responseType: 'blob' })
+  },
+  // 自助上传新版简历（挂起待 HR 确认转正）
+  uploadResume: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return portalHttp.post('/files/resume', fd)
+  },
+  removeResume: (id) => portalHttp.delete(`/files/resume/${id}`),
+  // 撤回自己回传的文件（传错可自助补救）
+  removeReturn: (id) => portalHttp.delete(`/files/returns/${id}`),
 }
 
 export const portalFormApi = {

@@ -84,8 +84,8 @@ class StageNoticeEntry(BaseModel):
     """单关通过通知模板。"""
 
     enabled: bool = Field(default=True, description="是否在该关通过时给候选人发通知")
-    title: str = Field(default="", max_length=100, description="通知标题，占位符 {候选人} {岗位} {关卡}")
-    body: str = Field(default="", max_length=5000, description="通知正文，占位符 {候选人} {岗位} {关卡}")
+    title: str = Field(default="", max_length=100, description="通知标题，占位符 {候选人} {岗位} {关卡} {负责人} {时间}")
+    body: str = Field(default="", max_length=5000, description="通知正文，占位符 {候选人} {岗位} {关卡} {负责人} {时间}")
 
 
 class StageNoticeIn(BaseModel):
@@ -111,7 +111,7 @@ def set_stage_notice(body: StageNoticeIn, db: Session = Depends(get_db), user: U
     """保存各关通过通知模板
 
 **干什么用**：候选人通过笔试/专业面/HR面/终面时，若该关开关开启，系统按模板渲染后给候选人发一条通知，
-候选人下次登录时弹窗展示。占位符：`{候选人}` `{岗位}` `{关卡}`；某关不想发就把它的开关关掉。
+候选人下次登录时弹窗展示。占位符：`{候选人}` `{岗位}` `{关卡}` `{负责人}` `{时间}`；某关不想发就把它的开关关掉。
 """
     # exclude_unset：只取客户端真正发了的关卡（配合 service 层合并式保存，
     # 部分保存不再把没传的关抹成默认——这里曾两次丢过 HR 自己保存的模板）

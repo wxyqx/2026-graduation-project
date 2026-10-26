@@ -87,3 +87,46 @@ def overview(db: Session = Depends(get_db), current: User = Depends(get_current_
             for x in recent
         ],
     }
+
+
+@router.get("/storage")
+def storage(db: Session = Depends(get_db), current: User = Depends(get_current_admin)):
+    """库体积与磁盘余量（v3.17 P1-15：BLOB 膨胀与磁盘占满是最可预期的死法，这里给出仪表）
+
+**返回什么**：
+- `file_blob_bytes`：候选人文件 BLOB 总量（库体积增长的主因）
+- `db_size_bytes`：整个 ats 库占用的数据+索引体积
+- `backup_free_bytes` / `backup_total_bytes`：备份目录所在盘的剩余/总空间
+- `file_count`：文件份数
+- `level`：ok（磁盘余量 ≥20%）/ warn（<20%）/ danger（<10%）——磁盘快满会导致备份失败与服务异常
+"""
+    import shutil
+    from pathlib import Path
+
+    from sqlalchemy import func, text
+
+    blob_bytes = db.scalar(select(func.coalesce(func.sum(CandidateFile.size_bytes), 0))) or 0
+    file_count = db.scalar(select(func.count()).select_from(CandidateFile)) or 0
+    row = db.execute(
+        text(
+            "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables "
+            "WHERE table_schema = DATABASE()"
+        )
+    ).scalar()
+    db_bytes = int(row or 0)
+    backup_dir = Path(r"D:\桌面\1.0\backups")  # 与 scripts/backup_db.py 的 BACKUP_DIR 同源
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    usage = shutil.disk_usage(backup_dir)
+    # 告警看「磁盘余量」而不是「库占磁盘比例」：库再大也占不到磁盘的百分之几，
+    # 真正会让备份失败/服务挂掉的是磁盘快满。余量 <10% 危险、<20% 警告。
+    free_ratio = usage.free / usage.total if usage.total else 1
+    level = "danger" if free_ratio < 0.10 else ("warn" if free_ratio < 0.20 else "ok")
+    return {
+        "file_blob_bytes": int(blob_bytes),
+        "file_count": int(file_count),
+        "db_size_bytes": db_bytes,
+        "backup_free_bytes": usage.free,
+        "backup_total_bytes": usage.total,
+        "backup_dir": str(backup_dir),
+        "level": level,
+    }

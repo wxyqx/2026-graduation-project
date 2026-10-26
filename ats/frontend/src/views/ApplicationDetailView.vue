@@ -9,7 +9,7 @@
 -->
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { applicationApi, candidateApi, formTemplateApi, interviewApi } from '../api'
@@ -23,6 +23,13 @@ const route = useRoute()
 const router = useRouter()
 const refreshStats = inject('refreshStats')
 
+// 投递列表的抽屉会以嵌入模式复用本页：传 applicationId 代替路由参数，embedded 隐藏「返回列表」
+const props = defineProps({
+  applicationId: { type: [String, Number], default: '' },
+  embedded: { type: Boolean, default: false },
+  initialTab: { type: String, default: '' },
+})
+
 const app = ref(null)
 const candidate = ref(null)
 const files = ref([])
@@ -35,7 +42,7 @@ const SOURCE_LABEL = { admin: 'HR 手动', ai_intake: 'AI 录入', portal: '候�
 async function load() {
   loading.value = true
   try {
-    const detail = await applicationApi.detail(route.params.id)
+    const detail = await applicationApi.detail(props.applicationId || route.params.id)
     app.value = detail
     if (detail.candidate?.id) {
       const [cand, fileList, appForms, candForms] = await Promise.all([
@@ -56,6 +63,13 @@ async function load() {
   }
 }
 onMounted(load)
+
+// 主要负责人 = 候选人负责人：能看全部附件；协助负责人只能看简历与面试相关材料
+const isPrimaryOwner = computed(() => {
+  const me = meId.value
+  if (me == null || !app.value) return true
+  return app.value.candidate_owner_id == null || app.value.candidate_owner_id === me
+})
 
 async function downloadFile(file) {
   downloadingId.value = file.id
@@ -108,10 +122,42 @@ const FORM_STATUS = { draft: '草稿', submitted: '已提交' }
 // 当前简历：个人信息页签第一行展示 + 下载
 const currentResume = computed(() => files.value.find((f) => f.category === 'resume' && f.is_current) || null)
 
-// 附件材料：除三类 Offer 文件之外的全部上传（候选人传的 + HR 传的）；Offer 文件单独在「Offer 文件」页签管理
+// 附件材料：简历和三类 Offer 文件之外的附件（证书 / 作品 / 其他）；简历单独在「简历」页签，Offer 文件单独管理
 const attachmentFiles = computed(() =>
-  files.value.filter((f) => !['offer', 'offer_agreement', 'background_check'].includes(f.category)),
+  files.value.filter((f) => f.category !== 'resume' && !['offer', 'offer_agreement', 'background_check'].includes(f.category)),
 )
+
+// 简历页签：当前简历 + 历史版本（换过简历的旧文件保留可查）
+const resumeHistory = computed(() => files.value.filter((f) => f.category === 'resume' && !f.is_current))
+// 候选人自助上传、待 HR 确认转正的新版简历（v3.17 P1-7）
+const pendingResumes = computed(() => resumeHistory.value.filter((f) => f.uploaded_by_role === 'candidate'))
+
+async function promoteResume(file) {
+  await candidateApi.promoteResume(file.id)
+  ElMessage.success('已转正为当前简历')
+  await load()
+}
+
+// 简历内嵌预览：切到「简历」页签时拉一次文件流，PDF / 图片直接铺在页签里，不用再点预览按钮
+const resumePreview = ref({ fileId: 0, url: '', type: 'other', loading: false })
+async function loadResumePreview() {
+  const f = currentResume.value
+  if (!f || (resumePreview.value.fileId === f.id && resumePreview.value.url)) return
+  if (resumePreview.value.url) URL.revokeObjectURL(resumePreview.value.url)
+  resumePreview.value = { fileId: f.id, url: '', type: 'other', loading: true }
+  try {
+    const resp = await candidateApi.fileBlob(f.id)
+    const mime = resp.headers['content-type'] || f.mime_type || ''
+    resumePreview.value = {
+      fileId: f.id,
+      url: URL.createObjectURL(resp.data),
+      type: mime.includes('pdf') ? 'pdf' : mime.startsWith('image/') ? 'image' : 'other',
+      loading: false,
+    }
+  } catch {
+    resumePreview.value = { fileId: f.id, url: '', type: 'other', loading: false }
+  }
+}
 
 // ---- Offer 文件：录用协议 / Offer / 背景调查三类，上传→预览→发送后才对候选人可见 ----
 const OFFER_TYPES = [
@@ -271,7 +317,7 @@ async function revert() {
 }
 
 // ---- 个人信息就地编辑（姓名/电话/邮箱/备注）----
-const RESUME_FIELDS = ['onboard_date', 'school', 'degree', 'major', 'expected_salary', 'work_location', 'hire_type', 'work_experience']
+const RESUME_FIELDS = ['birth', 'onboard_date', 'school', 'degree', 'major', 'expected_salary', 'work_location', 'hire_type', 'work_experience']
 const profileForm = reactive({ name: '', phone: '', email: '', remark: '', ...Object.fromEntries(RESUME_FIELDS.map((f) => [f, ''])) })
 const profileSaving = ref(false)
 const profileDirty = computed(() => {
@@ -308,14 +354,23 @@ async function saveProfile() {
     phone: profileForm.phone.trim(),
     email: profileForm.email.trim(),
     remark: profileForm.remark,
+    expectedUpdateTime: cur.update_time,
     ...Object.fromEntries(RESUME_FIELDS.map((f) => [f, profileForm[f].trim()])),
   }
   try {
     try {
       await candidateApi.update(cur.id, payload)
     } catch (e) {
-      // 409 = 姓名或手机号与已有候选人冲突：确认后带 confirm_duplicate 重新提交
-      if (e.response?.status === 409) {
+      if (e.response?.status === 409 && /刚被/.test(e.response.data?.detail || '')) {
+        // 乐观锁冲突：资料被其他 HR 先改过，确认后强制覆盖
+        await ElMessageBox.confirm(
+          '该候选人的资料刚被其他 HR 修改过。点「覆盖」将用你正在编辑的内容覆盖对方的修改。',
+          '资料有新改动',
+          { type: 'warning', confirmButtonText: '覆盖', cancelButtonText: '放弃我的修改' },
+        )
+        await candidateApi.update(cur.id, { ...payload, expectedUpdateTime: null, force: true })
+      } else if (e.response?.status === 409) {
+        // 409 = 姓名或手机号与已有候选人冲突：确认后带 confirm_duplicate 重新提交
         await ElMessageBox.confirm(e.response.data?.detail || e.detail || '与已有候选人冲突，确定继续吗？', '冲突提示', {
           type: 'warning',
           confirmButtonText: '仍要保存',
@@ -360,39 +415,34 @@ const noteStages = computed(() =>
 )
 
 // 详情页标签页：默认看各关记录；支持 ?tab=notices 等直达（投递列表的「通知×N」标记点进来）
-const activeTab = ref(route.query.tab ? String(route.query.tab) : 'notes')
+const activeTab = ref(
+  props.initialTab || (route.query.tab ? String(route.query.tab) : 'notes'),
+)
 
-// 各关记录：进度条滑动选关，下方只展示选中关的记录
-const noteIndex = ref(0)
-const selectedNote = computed(() => noteStages.value[noteIndex.value] || null)
-
-const noteMarks = computed(() => {
-  const marks = {}
-  noteStages.value.forEach((s, i) => {
-    // 滑块标签下带本关负责人：每个阶段都能看到这关归谁管（未认领的显示「未认领」）
-    const owner = stageOwnerName(s.stage)
-    marks[i] = {
-      style: {
-        color: s.stage === selectedNote.value?.stage ? 'var(--el-color-primary)' : STAGE_COLOR[s.stage],
-        fontWeight: s.stage === selectedNote.value?.stage ? 'var(--ats-fw-bold)' : 'var(--ats-fw-normal)',
-        whiteSpace: 'nowrap',
-      },
-      label: owner ? `${s.label}·${owner}` : s.label,
-    }
-  })
-  return marks
+// 简历内嵌预览的触发：切到「简历」页签就拉文件流（activeTab 在上面已定义，这里才能安全引用）
+watch(
+  [currentResume, activeTab],
+  ([, tab]) => {
+    if (tab === 'resume') loadResumePreview()
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  if (resumePreview.value.url) URL.revokeObjectURL(resumePreview.value.url)
 })
+
+// 各关记录：页签式选关，下方只展示选中关的记录
+const noteTab = ref('')
+const selectedNote = computed(() => noteStages.value.find((s) => s.stage === noteTab.value) || null)
 
 watch(noteStages, (list) => {
   if (!list.length) {
-    noteIndex.value = 0
+    noteTab.value = ''
     return
   }
   // 选中的关还在就保持；不在了（刷新/撤回）跳到正在进行的当前关，没有就第一项
-  const cur = selectedNote.value?.stage
-  const kept = list.findIndex((s) => s.stage === cur)
-  if (kept >= 0) noteIndex.value = kept
-  else noteIndex.value = Math.max(0, list.findIndex((s) => s.is_current))
+  if (list.some((s) => s.stage === noteTab.value)) return
+  noteTab.value = (list.find((s) => s.is_current) || list[0]).stage
 }, { immediate: true })
 
 // 就地表单：切关时同步，保存走 stage-note 接口
@@ -449,7 +499,25 @@ async function saveNoteInline() {
   if (!selectedNote.value) return
   noteSaving.value = true
   try {
-    await applicationApi.saveStageNote(app.value.id, selectedNote.value.stage, noteForm.reason, noteForm.evaluation)
+    try {
+      await applicationApi.saveStageNote(
+        app.value.id, selectedNote.value.stage, noteForm.reason, noteForm.evaluation, app.value.update_time,
+      )
+    } catch (e) {
+      // 409 = 记录被其他 HR 先改过：确认后强制覆盖
+      if (e.response?.status === 409) {
+        await ElMessageBox.confirm(
+          '这条记录刚被其他 HR 修改过。点「覆盖」将用你正在编辑的内容覆盖对方的修改。',
+          '记录有新改动',
+          { type: 'warning', confirmButtonText: '覆盖', cancelButtonText: '放弃我的修改' },
+        )
+        await applicationApi.saveStageNote(
+          app.value.id, selectedNote.value.stage, noteForm.reason, noteForm.evaluation, null, true,
+        )
+      } else {
+        throw e
+      }
+    }
     ElMessage.success('记录已保存')
     await load()
   } finally {
@@ -586,7 +654,7 @@ async function generateEvaluation() {
   <div v-loading="loading">
     <div class="page-header">
       <div class="title-row">
-        <el-button link @click="goBack">
+        <el-button v-if="!props.embedded" link @click="goBack">
           <el-icon><ArrowLeft /></el-icon>&nbsp;返回列表
         </el-button>
         <h2 v-if="app">{{ app.candidate?.name }}</h2>
@@ -707,17 +775,64 @@ async function generateEvaluation() {
 
       <!-- 下方内容收进标签页：页面不再无限往下滚 -->
       <el-tabs v-model="activeTab" class="detail-tabs">
+        <!-- 简历：单独一个页签，进来直接就是预览 -->
+        <el-tab-pane label="简历" name="resume">
+          <template v-if="currentResume">
+            <div class="panel-head">
+              <span class="muted">
+                {{ currentResume.original_name }} · {{ sizeText(currentResume.size_bytes) }} · 上传于 {{ fmtTime(currentResume.upload_time) }}
+              </span>
+              <el-button size="small" :loading="downloadingId === currentResume.id" @click="downloadFile(currentResume)">下载</el-button>
+            </div>
+            <div v-loading="resumePreview.loading" class="resume-inline">
+              <iframe
+                v-if="resumePreview.type === 'pdf'"
+                :src="resumePreview.url"
+                class="resume-frame"
+                :title="currentResume.original_name"
+              />
+              <img v-else-if="resumePreview.type === 'image'" :src="resumePreview.url" class="resume-img" :alt="currentResume.original_name" />
+              <div v-else-if="resumePreview.url" class="resume-fallback">
+                <p>该文件格式不支持在线预览</p>
+                <el-button type="primary" @click="downloadFile(currentResume)">下载查看</el-button>
+              </div>
+            </div>
+            <template v-if="pendingResumes.length">
+              <div class="resume-history-title muted">候选人上传的新版简历（待确认）</div>
+              <el-table class="rounded-table" :data="pendingResumes" border size="small">
+                <el-table-column prop="original_name" label="文件名" min-width="220" show-overflow-tooltip />
+                <el-table-column label="上传时间" width="160">
+                  <template #default="{ row }">{{ fmtTime(row.upload_time) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="180" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" :loading="downloadingId === row.id" @click="previewOfferFile(row)">预览</el-button>
+                    <el-button link type="success" @click="promoteResume(row)">转正为当前简历</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </template>
+            <template v-if="resumeHistory.length">
+              <div class="resume-history-title muted">历史版本（{{ resumeHistory.length }}）</div>
+              <el-table class="rounded-table" :data="resumeHistory" border size="small">
+                <el-table-column prop="original_name" label="文件名" min-width="220" show-overflow-tooltip />
+                <el-table-column label="上传时间" width="160">
+                  <template #default="{ row }">{{ fmtTime(row.upload_time) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="130" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" :loading="downloadingId === row.id" @click="previewOfferFile(row)">预览</el-button>
+                    <el-button link type="primary" :loading="downloadingId === row.id" @click="downloadFile(row)">下载</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </template>
+          </template>
+          <el-empty v-else description="还没有简历；可在新建投递时上传，或到候选人管理上传" :image-size="72" />
+        </el-tab-pane>
+
         <el-tab-pane label="个人信息" name="profile">
           <el-descriptions :column="3" border class="profile-desc">
-            <el-descriptions-item label="简历" :span="3">
-              <template v-if="currentResume">
-                <span class="resume-name">{{ currentResume.original_name }}</span>
-                <el-button link type="primary" :loading="downloadingId === currentResume.id" @click="downloadFile(currentResume)">
-                  下载
-                </el-button>
-              </template>
-              <span v-else class="muted">还没有上传简历</span>
-            </el-descriptions-item>
             <el-descriptions-item label="姓名">
               <el-input v-model="profileForm.name" placeholder="候选人姓名" maxlength="50" />
             </el-descriptions-item>
@@ -726,6 +841,16 @@ async function generateEvaluation() {
             </el-descriptions-item>
             <el-descriptions-item label="邮箱">
               <el-input v-model="profileForm.email" placeholder="选填" maxlength="100" />
+            </el-descriptions-item>
+            <el-descriptions-item label="出生年月">
+              <el-date-picker
+                v-model="profileForm.birth"
+                type="month"
+                value-format="YYYY-MM"
+                :editable="false"
+                placeholder="选择年月"
+                style="width: 100%"
+              />
             </el-descriptions-item>
             <!-- HR 从简历摘录的个人信息：与候选人填写的表单答卷是两套数据，各自独立 -->
             <el-descriptions-item label="到岗时间">
@@ -780,9 +905,11 @@ async function generateEvaluation() {
 
         <el-tab-pane label="附件材料" name="files">
           <div class="panel-head">
-            <span class="muted">HR 上传，候选人只读</span>
+            <span class="muted">
+              {{ isPrimaryOwner ? 'HR 上传，候选人只读' : '你是协助负责人：附件（证书 / 作品 / Offer 等）仅候选人负责人可见，你只能查看简历与面试相关材料' }}
+            </span>
           </div>
-          <el-table class="rounded-table" :data="attachmentFiles" border size="small" empty-text="还没有上传简历或附件">
+          <el-table class="rounded-table" :data="attachmentFiles" border size="small" empty-text="还没有附件材料（简历在「简历」页签）">
             <el-table-column prop="original_name" label="文件名" min-width="200" show-overflow-tooltip />
             <el-table-column label="分类" width="80">
               <template #default="{ row }">{{ FILE_CATEGORY[row.category] || row.category }}</template>
@@ -840,10 +967,11 @@ async function generateEvaluation() {
         <!-- Offer 文件：发给候选人下载填写的文档 -->
         <el-tab-pane :label="`Offer 文件${offerFiles.length ? `（${offerFiles.length}）` : ''}`" name="offer" lazy>
           <div class="panel-head">
-            <span class="muted">
+            <span v-if="!isPrimaryOwner" class="muted">你是协助负责人：Offer 文件仅候选人负责人可见、可发送</span>
+            <span v-else class="muted">
               先上传、预览检查；然后到「候选人通知」页签把通知（会自动列明这些文件）发送出去，候选人才能看到
             </span>
-            <span class="offer-upload-btns">
+            <span v-if="isPrimaryOwner" class="offer-upload-btns">
               <el-button
                 v-for="t in OFFER_TYPES"
                 :key="t.value"
@@ -953,33 +1081,20 @@ async function generateEvaluation() {
         </el-tab-pane>
 
         <el-tab-pane label="各关记录" name="notes" lazy>
-          <!-- 各关负责人总览：7 关归谁管一眼看全（含技术端预指派、还没走到的关） -->
-          <div class="stage-owner-strip" aria-label="各关负责人总览">
-            <div
-              v-for="st in (app.stages || [])"
-              :key="st.stage"
-              class="owner-chip"
-              :class="{ current: st.is_current }"
-            >
-              <i class="chip-dot" :style="{ background: STAGE_COLOR[st.stage] }" />
-              <span class="chip-stage">{{ st.label }}</span>
-              <span class="chip-owner" :class="{ claimed: !!stageOwnerName(st.stage) }">
-                {{ stageOwnerName(st.stage) || '未认领' }}
-              </span>
-            </div>
-          </div>
           <p class="muted tab-hint">补写各关的通过 / 淘汰原因与面试评价</p>
           <template v-if="noteStages.length">
-            <!-- 滑动选关：滑块停在哪个关，下面就展示哪个关的记录 -->
-            <el-slider
-              v-model="noteIndex"
-              :min="0"
-              :max="noteStages.length - 1"
-              :step="1"
-              :show-tooltip="false"
-              :marks="noteMarks"
-              class="note-slider"
-            />
+            <!-- 页签选关：点哪个关就展示哪个关的记录；色点对应管线里的关卡色，负责人小字跟在关名后 -->
+            <el-tabs v-model="noteTab" class="note-tabs">
+              <el-tab-pane v-for="s in noteStages" :key="s.stage" :name="s.stage">
+                <template #label>
+                  <span class="note-tab">
+                    <i class="note-dot" :style="{ background: STAGE_COLOR[s.stage] }" />
+                    {{ s.label }}
+                    <span class="note-tab-owner">{{ stageOwnerName(s.stage) || '未认领' }}</span>
+                  </span>
+                </template>
+              </el-tab-pane>
+            </el-tabs>
 
             <!-- 就地编辑表单：排版对齐面试登记表（分组头 + 两列栅格，文本域跨双列） -->
             <template v-if="selectedNote">
@@ -989,32 +1104,35 @@ async function generateEvaluation() {
                   <h4 class="note-section-title">{{ selectedNote.label }}</h4>
                   <span v-if="selectedNote.time" class="muted ats-nums">{{ fmtTime(selectedNote.time) }}</span>
                 </div>
-                <el-tag v-if="selectedNote.result" size="small" effect="light" :type="selectedNote.result === 'pass' ? 'success' : 'danger'">
+                <el-tag v-if="selectedNote.result" effect="light" :type="selectedNote.result === 'pass' ? 'success' : 'danger'">
                   {{ RESULT_LABEL[selectedNote.result] }}
-                </el-tag>
-                <el-tag
-                  size="small"
-                  :type="selectedStageEditable ? 'success' : 'info'"
-                  :effect="selectedStageEditable ? 'light' : 'plain'"
-                  :title="selectedStageEditable ? '你是本关负责人（或关卡未认领）' : '本阶段由其他 HR 负责，你只能查看'"
-                >
-                  负责人：{{ stageOwnerName(selectedNote.stage) || '未认领' }}
                 </el-tag>
               </div>
 
               <div class="note-panel">
                 <el-form class="note-form" label-position="top" @submit.prevent>
                 <el-form-item label="结果">
-                  <el-select
-                    v-model="noteResult"
-                    :disabled="!noteResultEditable || !selectedStageEditable"
-                    style="width: 100%"
-                    @change="onNoteResultChange"
-                  >
-                    <el-option label="进行中（未定）" value="" />
-                    <el-option label="通过" value="pass" />
-                    <el-option label="淘汰" value="fail" />
-                  </el-select>
+                  <div class="result-owner-row">
+                    <el-select
+                      v-model="noteResult"
+                      :disabled="!noteResultEditable || !selectedStageEditable"
+                      class="result-select"
+                      @change="onNoteResultChange"
+                    >
+                      <el-option label="进行中（未定）" value="" />
+                      <el-option label="通过" value="pass" />
+                      <el-option label="淘汰" value="fail" />
+                    </el-select>
+                    <el-tag
+                      size="small"
+                      :type="selectedStageEditable ? 'success' : 'info'"
+                      :effect="selectedStageEditable ? 'light' : 'plain'"
+                      class="result-owner-tag"
+                      :title="selectedStageEditable ? '你是本关负责人（或关卡未认领）' : '本阶段由其他 HR 负责，你只能查看'"
+                    >
+                      负责人：{{ stageOwnerName(selectedNote.stage) || '未认领' }}
+                    </el-tag>
+                  </div>
                 </el-form-item>
 
                 <div class="span-2 muted result-hint">
@@ -1352,6 +1470,38 @@ async function generateEvaluation() {
   border-radius: var(--ats-radius);
   overflow: hidden;
 }
+/* 简历页签：历史版本小标题 */
+.resume-history-title {
+  margin: var(--ats-sp-4) 0 var(--ats-sp-2);
+  font-size: var(--ats-fs-note);
+}
+/* 简历内嵌预览：铺满页签宽度、留足高度，边框和页面其他面板一个语言 */
+.resume-inline {
+  min-height: 420px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--ats-radius);
+  background: var(--el-bg-color);
+  overflow: hidden;
+}
+.resume-frame {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 260px);
+  border: 0;
+}
+.resume-img {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.resume-fallback {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+}
+.resume-fallback p {
+  margin: 0 0 var(--ats-sp-3);
+}
 /* 个人信息页签：网格表格，标签列固定宽，简历行文件名与下载并排 */
 .profile-desc :deep(.el-descriptions__label) {
   width: 110px;
@@ -1401,39 +1551,22 @@ async function generateEvaluation() {
   color: var(--el-text-color-regular);
 }
 
-/* ---- 各关记录：滑动选关 ---- */
-.note-slider {
-  /* 居中、缩短轨道：两端刻度文字有地方放，不再被裁掉 */
-  max-width: 72%;
-  margin: var(--ats-sp-3) auto var(--ats-sp-6);
+/* ---- 各关记录：页签选关 ---- */
+.note-tabs :deep(.el-tabs__header) {
+  margin-bottom: var(--ats-sp-3);
 }
-/* 加粗：轨道加厚、滑块加大、刻度文字加重 */
-.note-slider :deep(.el-slider__runway) {
-  height: 10px;
-  border-radius: 5px;
+.note-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.note-slider :deep(.el-slider__bar) {
-  height: 10px;
-  border-radius: 5px;
+/* 关名后的负责人小字：选中态跟随页签主题色，未选中保持灰 */
+.note-tab-owner {
+  font-size: var(--ats-fs-label);
+  color: var(--el-text-color-placeholder);
 }
-.note-slider :deep(.el-slider__button-wrapper) {
-  top: -15px;
-}
-.note-slider :deep(.el-slider__button) {
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--el-color-primary);
-  box-shadow: 0 2px 8px rgb(10 40 36 / 18%);
-}
-.note-slider :deep(.el-slider__stop) {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-.note-slider :deep(.el-slider__marks-text) {
-  font-size: var(--ats-fs-body);
-  font-weight: var(--ats-fw-medium);
-  transform: translateX(-50%) !important;
+.note-tabs :deep(.is-active .note-tab-owner) {
+  color: inherit;
 }
 /* 与管线里同一关同色的小色条，让两处一眼对得上 */
 .note-dot {
@@ -1453,8 +1586,8 @@ async function generateEvaluation() {
   background: var(--el-fill-color-light);
 }
 .note-section-bar {
-  width: 3px;
-  height: 16px;
+  width: 4px;
+  height: 18px;
   border-radius: 2px;
   flex: none;
 }
@@ -1467,8 +1600,8 @@ async function generateEvaluation() {
 }
 .note-section-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: var(--ats-fw-medium);
+  font-size: var(--ats-fs-card);
+  font-weight: var(--ats-fw-bold);
   color: var(--el-text-color-primary);
 }
 
@@ -1479,8 +1612,17 @@ async function generateEvaluation() {
   column-gap: 24px;
   row-gap: 20px;
 }
+/* 字段标签是第二级层次：加粗、正文色，和小号灰提示拉开差距 */
 .note-form :deep(.el-form-item__label) {
-  padding-bottom: 6px;
+  padding-bottom: 4px;
+  line-height: 1.4;
+  font-size: var(--ats-fs-body);
+  font-weight: var(--ats-fw-bold);
+  color: var(--el-text-color-primary);
+}
+.note-form :deep(.el-textarea__inner) {
+  font-size: var(--ats-fs-body);
+  line-height: 1.7;
 }
 .note-form .span-2 {
   grid-column: 1 / -1;
@@ -1488,10 +1630,6 @@ async function generateEvaluation() {
 .note-form :deep(.el-form-item) {
   margin-bottom: 0;
   min-width: 0;
-}
-.note-form :deep(.el-form-item__label) {
-  padding-bottom: 4px;
-  line-height: 1.4;
 }
 .result-hint {
   margin-top: 2px;
@@ -1579,45 +1717,25 @@ async function generateEvaluation() {
   margin-top: var(--ats-sp-3);
 }
 
+/* 结果行：下拉 + 负责人标签同排 */
+.result-owner-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.result-select {
+  flex: none;
+  width: 160px; /* 只包住「进行中（未定）」等字样，不拉满整行 */
+}
+.result-owner-tag {
+  flex: none;
+  white-space: nowrap;
+}
+
 .stage-owner-tag {
   margin-right: var(--ats-sp-2);
   color: var(--el-text-color-regular);
-}
-
-/* ---- 各关负责人总览条：色点=关卡，灰=未认领 ---- */
-.stage-owner-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin-bottom: var(--ats-sp-3);
-}
-.owner-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--el-fill-color-lighter);
-  font-size: 12px;
-}
-.owner-chip.current {
-  background: var(--el-color-primary-light-9);
-}
-.chip-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-.chip-stage {
-  color: var(--el-text-color-secondary);
-}
-.chip-owner {
-  font-weight: var(--ats-fw-medium);
-  color: var(--el-text-color-placeholder);
-}
-.chip-owner.claimed {
-  color: var(--el-text-color-primary);
 }
 
 /* ---- 发送前预览（候选人弹窗样式）---- */

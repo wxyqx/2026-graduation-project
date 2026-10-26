@@ -42,6 +42,11 @@ export const candidateApi = {
   create: (data) => http.post('/candidates', data),
   update: (id, data) => http.put(`/candidates/${id}`, data),
   remove: (id) => http.delete(`/candidates/${id}`), // 级联删除：连带删掉他名下的投递
+  // 负责人移交（v3.17 P0-4）：当前负责人把候选人移交给其他 HR
+  hrOptions: () => http.get('/candidates/hr-options'),
+  transferOwner: (id, owner_id) => http.put(`/candidates/${id}/owner`, { owner_id }),
+  // 候选人自助上传的新版简历转正（v3.17 P1-7）
+  promoteResume: (fileId) => http.put(`/files/${fileId}/promote-resume`),
   // 文件（HR 上传 / 候选人只读）
   files: (id) => http.get(`/candidates/${id}/files`),
   uploadFile: (id, file, category = 'resume', applicationId = null) => {
@@ -52,6 +57,12 @@ export const candidateApi = {
     return http.post(`/candidates/${id}/files`, fd)
   },
   removeFile: (fileId) => http.delete(`/files/${fileId}`),
+  // 简历字段识别：只识别姓名/电话/邮箱/出生年月，不建档、不筛选（AI 不可用时自动降级为正则）
+  parseResume: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.post('/candidates/parse-resume', fd)
+  },
   // 发送 Offer 文件给候选人（重复发送幂等，保留首次发送时间）
   sendOfferFile: (fileId) => http.put(`/files/${fileId}/send`),
   // 预览用：拿原始 blob（下载是触发浏览器保存，这个给调用方自己处理）
@@ -75,7 +86,8 @@ export const candidateApi = {
 // ---- 投递 ----
 export const applicationApi = {
   list: (params) => http.get('/applications', { params }),
-  create: (can_id, pos_id) => http.post('/applications', { can_id, pos_id }),
+  // 手动建档建投递走候选人路由（候选人管理页「同时投递」）；投递列表页不再直接新建
+  create: (can_id, pos_id) => http.post(`/candidates/${can_id}/applications`, { pos_id }),
   detail: (id) => http.get(`/applications/${id}`),
   // fromStage 必须是当前阶段，result 是 pass / fail；fail 必须先弹窗确认（confirmEliminate=true），否则后端 400
   advance: (id, fromStage, result, confirmEliminate = false) =>
@@ -83,8 +95,9 @@ export const applicationApi = {
   // toStage 不传 = 撤销上一步
   revert: (id, toStage) => http.post(`/applications/${id}/revert`, toStage ? { toStage } : {}),
   // 给某一关补写「结果原因」/「面试评价」（不改流程状态；空字符串 = 清空该项）
-  saveStageNote: (id, stage, reason, evaluation) =>
-    http.put(`/applications/${id}/stage-note`, { stage, reason, evaluation }),
+  // expectedUpdateTime/force：乐观锁（读到的更新时间 + 冲突确认覆盖）
+  saveStageNote: (id, stage, reason, evaluation, expectedUpdateTime = null, force = false) =>
+    http.put(`/applications/${id}/stage-note`, { stage, reason, evaluation, expectedUpdateTime, force }),
   // ---- 通过通知（草稿 → 编辑 → 发送）----
   appNotices: (appId) => http.get(`/applications/${appId}/notices`),
   editAppNotice: (appId, noticeId, data) => http.put(`/applications/${appId}/notices/${noticeId}`, data),

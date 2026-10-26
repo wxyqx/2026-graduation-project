@@ -29,7 +29,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_hr
 from app.models import Application, Candidate, CandidateFile, User
 from app.schemas.file import CandidateFileOut
-from app.services import file_service, notice_service
+from app.services import file_service, notice_service, ownership
 from app.services.log_service import log_action
 
 router = APIRouter(prefix="/api", tags=["files"])
@@ -57,13 +57,17 @@ def list_candidate_files(can_id: CanId, db: Session = Depends(get_db), user: Use
     """某候选人的全部文件（简历、证书、作品）
 
 **干什么用**：HR 候选人详情页「文件」分区。按上传时间倒序，简历会标出当前版本。
+
+**权限**：主要负责人（候选人负责人）能看全部；协助负责人（非主要负责人）只能看到简历，
+证书 / 作品 / 其他 / Offer 三件套属于私密附件，不可见。
 """
-    _candidate_or_404(db, can_id)
+    c = _candidate_or_404(db, can_id)
     rows = db.scalars(
         select(CandidateFile)
         .where(CandidateFile.candidate_id == can_id)
         .order_by(CandidateFile.upload_time.desc())
     ).all()
+    rows = ownership.filter_private_files(rows, c, user)
     return [file_service.serialize(f, for_candidate=False) for f in rows]
 
 
@@ -127,6 +131,9 @@ def send_offer_file(file_id: FileId, db: Session = Depends(get_db), user: User =
     f = _file_or_404(db, file_id)
     if f.category not in file_service.OFFER_CATEGORIES:
         raise HTTPException(status_code=400, detail="只有录用协议 / Offer / 背景调查需要发送；其他分类上传后即对候选人可见")
+    c = db.get(Candidate, f.candidate_id)
+    if c is not None and not ownership.is_primary_owner(c, user):
+        raise HTTPException(status_code=403, detail="Offer 文件仅候选人负责人可以发送")
     if f.send_time is None:
         f.send_time = datetime.now()
         log_action(
@@ -144,8 +151,11 @@ def send_offer_file(file_id: FileId, db: Session = Depends(get_db), user: User =
 
 @router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_file(file_id: FileId, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
-    """删除文件（HR）"""
+    """删除文件（HR；私密附件仅候选人负责人可删，简历类任意 HR 可删）"""
     f = _file_or_404(db, file_id)
+    c = db.get(Candidate, f.candidate_id)
+    if c is not None and f.category != "resume" and not ownership.is_primary_owner(c, user):
+        raise HTTPException(status_code=403, detail="该附件仅候选人负责人可以删除")
     log_action(db, user, "delete", target_type="file", target_id=f.id, detail={"name": f.original_name})
     db.delete(f)
     db.commit()
@@ -158,8 +168,42 @@ def download_file(file_id: FileId, db: Session = Depends(get_db), user: User = D
 返回文件流。中文文件名用 RFC 5987 的 `filename*` 编码，浏览器能正确还原。
 """
     f = _file_or_404(db, file_id)
+    # 私密附件：非主要负责人（协助负责人）连下载/预览也不行，简历除外
+    c = db.get(Candidate, f.candidate_id)
+    if c is not None and f.category != "resume" and not ownership.is_primary_owner(c, user):
+        raise HTTPException(status_code=403, detail="该附件仅候选人负责人可见，你只能查看简历与面试相关材料")
     return Response(
         content=f.content,
         media_type=f.mime_type,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f.original_name)}"},
     )
+
+
+@router.put("/files/{file_id}/promote-resume", response_model=CandidateFileOut)
+def promote_resume(file_id: FileId, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
+    """把候选人自助上传的简历转正为当前简历（v3.17 P1-7）
+
+**干什么用**：候选人端上传的新版简历先挂起（is_current=0），HR 核对后调本接口转正：
+原当前简历自动降为历史版本，被转正的文件变成「当前简历」。
+"""
+    f = _file_or_404(db, file_id)
+    if f.category != "resume" or f.uploaded_by_role != "candidate":
+        raise HTTPException(status_code=400, detail="只能转正「候选人上传」的简历")
+    if f.is_current:
+        raise HTTPException(status_code=400, detail="该文件已是当前简历")
+    # 行锁 + 降级旧当前版本（与 save_file 同一套并发口径）
+    db.execute(select(Candidate.id).where(Candidate.id == f.candidate_id).with_for_update())
+    for old in db.scalars(
+        select(CandidateFile).where(
+            CandidateFile.candidate_id == f.candidate_id,
+            CandidateFile.category == "resume",
+            CandidateFile.is_current == 1,
+        )
+    ).all():
+        old.is_current = 0
+    f.is_current = 1
+    log_action(db, user, "update", target_type="file", target_id=f.id,
+               detail={"promote_resume": True, "candidate_id": f.candidate_id, "name": f.original_name})
+    db.commit()
+    db.refresh(f)
+    return file_service.serialize(f, for_candidate=False)

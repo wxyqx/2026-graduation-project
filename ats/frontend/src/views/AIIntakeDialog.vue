@@ -104,6 +104,55 @@ async function submit() {
   }
 }
 
+// ---- 失败项重试（v3.17 P1-10）：error / extract_failed 的条目单独重跑，不必整批重来 ----
+const retryingIndex = ref(-1)
+const canRetry = (row) => row.status === 'error' || row.status === 'extract_failed'
+
+async function retryRow(row) {
+  let files = []
+  let texts = []
+  if (row.source === 'file') {
+    // 后端结果里文件排在文本之前，文件行的 index 就是 fileList 下标
+    const f = fileList.value[row.index]?.raw
+    if (!f) {
+      ElMessage.warning('找不到原文件（清空后需重新选择文件再试）')
+      return
+    }
+    files = [f]
+  } else {
+    // 文本行的 index 是被后端按「文件数 + 文本序号」统一编号的，必须扣掉文件数才是 textItems 下标
+    const fileCount = results.value.filter((r) => r.source === 'file').length
+    const t = textItems[row.index - fileCount]?.text?.trim()
+    if (!t) {
+      ElMessage.warning('找不到原文本（清空后需重新粘贴再试）')
+      return
+    }
+    texts = [t]
+  }
+  retryingIndex.value = row.index
+  try {
+    const data = await uploadIntake(files, texts, positionExtras.all(), isAuto.value ? null : posId.value)
+    const r = data.results?.[0]
+    if (r) {
+      // 原位替换结果行，汇总重新统计
+      results.value.splice(row.index, 1, r)
+      recount()
+      if (r.status === 'ok') ElMessage.success('重试成功，已建档')
+      else ElMessage.info(`重试结果：${STATUS_META[r.status]?.text || r.status}`)
+    }
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    retryingIndex.value = -1
+  }
+}
+
+function recount() {
+  const sum = { ok: 0, duplicate: 0, no_position: 0, extract_failed: 0, error: 0 }
+  for (const r of results.value || []) sum[r.status] = (sum[r.status] || 0) + 1
+  summary.value = sum
+}
+
 function reset() {
   results.value = null
   summary.value = null
@@ -250,8 +299,15 @@ function close() {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="说明 / 理由" min-width="180" show-overflow-tooltip>
+        <el-table-column label="说明 / 理由" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.message || row.ai_comment || '' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="canRetry(row)" link type="primary" :loading="retryingIndex === row.index" @click="retryRow(row)">
+              重试
+            </el-button>
+          </template>
         </el-table-column>
       </el-table>
     </template>

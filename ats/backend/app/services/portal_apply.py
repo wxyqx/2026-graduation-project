@@ -8,7 +8,7 @@
 
 返回 screening 三种值（前端文案用）：
   ai_pass        AI 初筛通过 → 自动进入简历筛选
-  ai_fail        AI 初筛未通过 → 标记已淘汰
+  ai_fail        AI 初筛未通过 → 只记 AI 意见，停在 ai 关等 HR 人工复核（不自动淘汰）
   pending_review 转人工 → 停在 AI 筛选关，等 HR 处理
 """
 from sqlalchemy import select
@@ -21,7 +21,7 @@ from app.services.pdf import PdfExtractError, extract_text
 
 MESSAGES = {
     "ai_pass": "简历已通过初筛，进入简历筛选阶段",
-    "ai_fail": "很遗憾，本次初筛未通过",
+    "ai_fail": "初筛未通过，已转人工复核，请留意后续通知",
     "pending_review": "简历已提交，HR 会尽快查看",
 }
 

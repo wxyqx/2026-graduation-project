@@ -4,7 +4,7 @@
 谁触发：applications 的 advance 接口在 pass 了 test/pro/hr/final 后按模板生成**草稿**（候选人不可见）；
 HR 在投递详情「候选人通知」里逐人编辑后确认发送，发送后候选人登录弹窗展示。
 去重：同一候选人 + 同一投递 + 同一关卡只生成一条草稿（撤回再重新通过不会重复生成）。
-模板占位符：{候选人} {岗位} {关卡}，生成草稿时渲染，之后 HR 还可逐人修改。
+模板占位符：{候选人} {岗位} {关卡} {负责人} {时间} {申诉联系方式}，生成草稿时渲染，之后 HR 还可逐人修改。
 """
 import re
 from datetime import datetime, timedelta
@@ -67,12 +67,19 @@ def _next_stage(stage: str) -> str | None:
 
 
 def _resolve_owner_name(db: Session, app: Application, owner_stage: str | None) -> str:
-    """占位符 {负责人} 的取值链：指定关卡的负责人 → 候选人负责人 → 通用称呼。
+    """占位符 {负责人} 的取值链：岗位级关卡负责人 → 投递级关卡负责人 → 候选人负责人 → 通用称呼。
 
     通过通知传「下一关」（告知候选人接下来由谁负责）；淘汰通知传「本关」（评估人）；
     final 通过 / 入职没有下一关 → 自然落到候选人负责人。
     """
     if owner_stage:
+        from app.services import ownership
+
+        pos_uid = ownership.position_owner_ids(db, app.pos_id).get(owner_stage)
+        if pos_uid:
+            u = db.get(User, pos_uid)
+            if u and (u.real_name or u.username):
+                return u.real_name or u.username
         row = db.scalar(
             select(StageOwner).where(StageOwner.application_id == app.id, StageOwner.stage == owner_stage)
         )
@@ -88,8 +95,18 @@ def _resolve_owner_name(db: Session, app: Application, owner_stage: str | None) 
     return "招聘负责人"
 
 
+def _stage_time_text(app: Application, stage: str) -> str:
+    """占位符 {时间}：本关出结果的时间（通过=该关通过时间，淘汰=该关淘汰时间）。
+
+    onboard 是流程外的展示关、没有时间列；ai 没有时间列——都退回投递更新时间，再取不到用当前时间。
+    """
+    _, time_field = STAGE_FIELDS.get(stage, (None, None))
+    t = (getattr(app, time_field, None) if time_field else None) or app.update_time or datetime.now()
+    return t.strftime("%Y年%m月%d日")
+
+
 def _template_values(db: Session, app: Application, stage: str, owner_stage: str | None = None) -> dict[str, str]:
-    """模板占位符取值：{候选人} {岗位} {关卡} {负责人}。"""
+    """模板占位符取值：{候选人} {岗位} {关卡} {负责人} {时间}。"""
     cand = db.get(Candidate, app.can_id)
     pos = db.get(Position, app.pos_id) if app.pos_id else None
     return {
@@ -98,6 +115,8 @@ def _template_values(db: Session, app: Application, stage: str, owner_stage: str
         # onboard（入职通知）不在 7 关流程里，关卡名直接叫「入职」
         "关卡": "入职" if stage == "onboard" else STAGE_LABELS.get(stage, stage),
         "负责人": _resolve_owner_name(db, app, owner_stage),
+        "时间": _stage_time_text(app, stage),
+        "申诉联系方式": settings_svc.get_appeal_contact(db),
     }
 
 
@@ -130,6 +149,15 @@ def send_eliminate_notice(db: Session, app: Application, stage: str) -> None:
     )
     if exists is not None:
         return
+    # 淘汰后，之前各关残留的「待发」通过草稿一并作废：
+    # 候选人已被淘汰，这些通过通知永远不该再发；留着只会让列表虚报「通知×N」、详情里多出一个不该发的按钮
+    for stale in db.scalars(
+        select(CandidateNotice).where(
+            CandidateNotice.application_id == app.id,
+            CandidateNotice.send_time.is_(None),
+        )
+    ).all():
+        db.delete(stale)
     values = _template_values(db, app, stage, owner_stage=stage)  # 淘汰：本关负责人
     notice = CandidateNotice(
         candidate_id=app.can_id,

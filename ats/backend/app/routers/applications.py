@@ -15,13 +15,12 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_hr
-from app.models import Application, Candidate, CandidateNotice, Position, User
-from app.schemas.application import AdvanceIn, ApplicationCreate, RevertIn, StageNoteIn
+from app.models import Application, Candidate, CandidateNotice, User
+from app.schemas.application import AdvanceIn, RevertIn, StageNoteIn
 from app.services import email_service, notice_service, ownership
 from app.services import positions as positions_svc
 from app.services import state_machine as sm
@@ -117,63 +116,16 @@ def list_applications(
         ).all()
         pending_map = dict(rows)
     owner_map = ownership.stage_owner_map_bulk(db, [a.id for a in apps])
+    pos_owner_map = ownership.position_owner_ids_bulk(db, list({a.pos_id for a in apps}))
     out = []
     for a in apps:
         item = application_summary(a)
         item["pending_notices"] = pending_map.get(a.id, 0)
-        item["stage_owner_ids"] = {st: o.user_id for st, o in owner_map.get(a.id, {}).items()}
+        # 生效负责人 = 岗位级指派优先，未指派的关用投递级认领记录
+        effective = {**{st: o.user_id for st, o in owner_map.get(a.id, {}).items()}, **pos_owner_map.get(a.pos_id, {})}
+        item["stage_owner_ids"] = effective
         out.append(item)
     return out
-
-
-@router.post("", status_code=status.HTTP_201_CREATED)
-def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
-    """手动新建一条投递（某人投了某岗位）
-
-**干什么用**：不走 AI 录入、手动把「张三投了 Java 岗」记进系统。新投递永远从第一关 `ai` 开始、状态 `pending`。
-
-**怎么填**：`can_id` 候选人编号 + `pos_id` 岗位编号，两个都得先存在。
-
-**返回什么**：完整详情（和 GET /{id} 一样，含 7 关时间线）。
-
-**可能出错**：
-- 404：候选人或岗位编号不存在
-- 409：这个人已经投过这个岗位了（同一人同一岗只能一条）
-
-**小知识**：手动建的投递第一关 `ai` 也可以人工打分——调 advance 传 `{"fromStage": "ai", "result": "pass"}` 就跳过 AI 直接进第二关。
-"""
-    # 先确认「人」和「岗位」都真实存在
-    if db.get(Candidate, body.can_id) is None:
-        raise HTTPException(status_code=404, detail="候选人不存在")
-    pos = db.get(Position, body.pos_id)
-    if pos is None:
-        raise HTTPException(status_code=404, detail="岗位不存在")
-    if pos.is_hidden:
-        raise HTTPException(status_code=400, detail=f"「{pos.position_name}」已设为暂不招，不能建投递")
-    # 再查重：同一个人投同一个岗位只能有一条
-    dup = db.scalar(
-        select(Application).where(Application.can_id == body.can_id, Application.pos_id == body.pos_id)
-    )
-    if dup:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该候选人已投递过此岗位")
-    now = datetime.now()
-    a = Application(
-        can_id=body.can_id,
-        pos_id=body.pos_id,
-        current_stage="ai",  # 新投递永远从第一关开始
-        overall_status="pending",
-        create_time=now,
-        update_time=now,
-    )
-    db.add(a)
-    try:
-        db.commit()
-    except IntegrityError:
-        # 双保险：万一两个请求同一瞬间都通过了上面的查重，数据库的唯一约束会拦住第二个，这里接住它
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该候选人已投递过此岗位")
-    db.refresh(a)
-    return application_detail(a, db)
 
 
 @router.get("/{app_id}")
@@ -315,6 +267,7 @@ def edit_app_notice(
     _get_or_404(db, app_id)
     try:
         n = notice_service.edit_notice(db, notice_id, body.title, body.body)
+        log_action(db, user, "update", target_type="notice", target_id=notice_id, detail={"edited": True})
         db.commit()
     except LookupError as e:
         db.rollback()
@@ -362,6 +315,7 @@ def discard_app_notice(
     _get_or_404(db, app_id)
     try:
         notice_service.discard_notice(db, notice_id)
+        log_action(db, user, "delete", target_type="notice", target_id=notice_id, detail={"discarded": True})
         db.commit()
     except LookupError as e:
         db.rollback()
@@ -452,6 +406,12 @@ def save_stage_note(
     # 出过结果的关、或正在进行的当前关，都能写；还没走到的关写了对不上号，拒绝
     if not sm.stage_is_writable(a, body.stage):
         raise HTTPException(status_code=400, detail="该阶段尚未进行，不能填写")
+    # 乐观锁（v3.17 P1-5）：前端带上读到的 update_time，被别人先改过则 409，确认后带 force 覆盖
+    if body.expected_update_time is not None and not body.force and a.update_time and body.expected_update_time != a.update_time:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="这条投递的记录刚被其他 HR 修改过；请刷新查看最新内容，或选择覆盖",
+        )
     if body.evaluation and not evaluation_field:
         raise HTTPException(status_code=400, detail="该阶段没有面试评价项（仅面试环节可填）")
     try:

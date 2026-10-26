@@ -61,6 +61,7 @@ def main() -> int:
         cand1 = r.json()["id"]
         ids["candidates"].append(cand1)
         r = c.post("/api/portal/auth/login", json={"phone": phone1, "password": "admin"})
+        c.post("/api/portal/auth/privacy-consent", headers={"Authorization": f"Bearer {r.json()['token']}"})
         check("候选人甲登录", r.status_code == 200, r.text[:150])
         C1 = {"Authorization": f"Bearer {r.json()['token']}"}
 
@@ -69,6 +70,7 @@ def main() -> int:
         cand2 = r.json()["id"]
         ids["candidates"].append(cand2)
         r = c.post("/api/portal/auth/login", json={"phone": phone2, "password": "admin"})
+        c.post("/api/portal/auth/privacy-consent", headers={"Authorization": f"Bearer {r.json()['token']}"})
         C2 = {"Authorization": f"Bearer {r.json()['token']}"}
 
         # ---------- 文件（HR 上传，候选人只读） ----------
@@ -229,7 +231,7 @@ def main() -> int:
         # 表单可见阶段默认 pro 起（v3.16），测试要投递后即可填，先改成 ai 起
         c.put("/api/settings/portal-form-stage", headers=H, json={"position": "ai", "assessment": "ai"})
 
-        r = c.post("/api/applications", headers=H, json={"can_id": cand1, "pos_id": pos})
+        r = c.post(f"/api/candidates/{cand1}/applications", headers=H, json={"pos_id": pos})
         check("建投递", r.status_code == 201, r.text[:200])
         app_id = r.json()["id"]
         ids["applications"].append(app_id)

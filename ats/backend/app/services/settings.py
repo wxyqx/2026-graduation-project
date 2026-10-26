@@ -214,3 +214,76 @@ def set_stage_notice(db: Session, cfg: dict[str, dict]) -> dict[str, dict]:
         }
     set_setting(db, admin.id, STAGE_NOTICE_KEY, json.dumps(clean, ensure_ascii=False))
     return get_stage_notice(db)
+
+
+# ---------- 隐私政策与 AI 筛选告知（系统级设置，挂技术管理员名下）----------
+
+PRIVACY_KEY = "privacy_policy"
+DEFAULT_PRIVACY_VERSION = "2026-10-26.1"
+DEFAULT_PRIVACY_TEXT = """《候选人个人信息处理与 AI 筛选告知书》
+
+在您使用本招聘系统前，请阅读并了解以下内容：
+
+1. 信息收集：投递与招聘过程中，我们会收集您的姓名、手机号、邮箱、出生年月、简历内容，
+   以及您填写的个人资料表、面试登记表、职业底色图等信息。
+
+2. 使用目的：上述信息仅用于本次招聘的资格评估、面试安排、录用沟通与入职办理，
+   不用于任何其他目的，不对外提供。
+
+3. AI 辅助筛选告知：您的简历会由 AI 程序进行辅助解读与岗位匹配度评估，
+   评估结果供招聘人员参考，录用决定由人工作出。
+
+4. 保留与删除：被淘汰的候选人，账号将保留 2 天供查看历史通知，之后登录通道关闭；
+   相关资料保留 90 天后不再对任何人展示。您有权要求更正或删除您的个人信息，
+   可通过招聘联系人或页面上的联系方式提出。
+
+5. 同意：勾选「同意」即表示您已阅读并理解上述内容，同意我们按所述方式处理您的个人信息。
+   拒绝同意将无法使用在线投递功能。
+"""
+
+
+def get_privacy_policy(db: Session) -> dict:
+    """当前生效的隐私政策文案与版本；技术端没改过就用内置默认。"""
+    admin = get_system_admin(db)
+    raw = get_setting(db, admin.id, PRIVACY_KEY) if admin else None
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("text"):
+                return {"version": data.get("version") or DEFAULT_PRIVACY_VERSION, "text": data["text"]}
+        except (ValueError, TypeError):
+            pass
+    return {"version": DEFAULT_PRIVACY_VERSION, "text": DEFAULT_PRIVACY_TEXT}
+
+
+def set_privacy_policy(db: Session, text: str) -> dict:
+    """技术端保存政策文案；版本号按保存时间自动生成（候选人同意记录引用它）。"""
+    admin = get_system_admin(db)
+    if admin is None:
+        raise ValueError("系统里还没有技术管理员账号")
+    clean = (text or "").strip()
+    if not clean:
+        raise ValueError("政策文案不能为空")
+    version = datetime.now().strftime("%Y%m%d.%H%M%S")
+    set_setting(db, admin.id, PRIVACY_KEY, json.dumps({"version": version, "text": clean}, ensure_ascii=False))
+    return get_privacy_policy(db)
+
+
+# ---------- 淘汰申诉联系方式（系统级，占位符 {申诉联系方式} 用）----------
+
+APPEAL_CONTACT_KEY = "appeal_contact"
+DEFAULT_APPEAL_CONTACT = "如对结果有异议，请通过招聘页面公示的联系方式与招聘负责人联系申诉。"
+
+
+def get_appeal_contact(db: Session) -> str:
+    admin = get_system_admin(db)
+    raw = get_setting(db, admin.id, APPEAL_CONTACT_KEY) if admin else None
+    return (raw or "").strip() or DEFAULT_APPEAL_CONTACT
+
+
+def set_appeal_contact(db: Session, text: str) -> str:
+    admin = get_system_admin(db)
+    if admin is None:
+        raise ValueError("系统里还没有技术管理员账号")
+    set_setting(db, admin.id, APPEAL_CONTACT_KEY, (text or "").strip())
+    return get_appeal_contact(db)

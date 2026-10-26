@@ -40,7 +40,14 @@ def _ip(request: Request) -> str | None:
 
 
 def _candidate_out(c: Candidate) -> PortalCandidateOut:
-    return PortalCandidateOut(id=c.id, name=c.name, phone=c.phone, email=c.email, create_time=c.create_time)
+    return PortalCandidateOut(
+        id=c.id,
+        name=c.name,
+        phone=c.phone,
+        email=c.email,
+        create_time=c.create_time,
+        consent_time=c.consent_time,
+    )
 
 
 def _user_out(u: User) -> PortalUserOut:
@@ -156,6 +163,49 @@ def me(current: User = Depends(get_current_candidate)):
     return PortalMeOut(user=_user_out(current), candidate=_candidate_out(current.candidate))
 
 
+@router.get("/privacy-policy")
+def get_privacy_policy(current: User = Depends(get_current_candidate), db: Session = Depends(get_db)):
+    """当前生效的《隐私政策与 AI 筛选告知书》（PIPL 告知-同意环节）
+
+**返回什么**：`{version, text, consent_time}`——version 是文案版本（候选人同意记录引用它），
+consent_time 为 NULL 表示这位候选人还没同意过。
+"""
+    from app.services import settings as settings_svc
+
+    policy = settings_svc.get_privacy_policy(db)
+    cand = current.candidate
+    return {**policy, "consent_time": cand.consent_time if cand else None}
+
+
+@router.post("/privacy-consent")
+def record_privacy_consent(
+    request: Request,
+    current: User = Depends(get_current_candidate),
+    db: Session = Depends(get_db),
+):
+    """记录「已阅读并同意」隐私政策（勾选后点同意时调用，幂等）
+
+**会发生什么**：写 Candidate.consent_time / consent_version（当前政策版本），写操作日志；
+同意前投递 / 填表 / 回传都被拦（403）。
+"""
+    from datetime import datetime as dt
+
+    from app.services import settings as settings_svc
+
+    cand = current.candidate
+    if cand is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号未关联候选人档案，请联系 HR")
+    policy = settings_svc.get_privacy_policy(db)
+    if cand.consent_time is None:
+        cand.consent_time = dt.now()
+        cand.consent_version = policy["version"]
+        log_action(db, current, "update", target_type="candidate", target_id=cand.id,
+                   detail={"privacy_consent": True, "version": policy["version"]}, ip=_ip(request))
+        db.commit()
+        db.refresh(cand)
+    return {"consent_time": cand.consent_time, "version": cand.consent_version}
+
+
 @router.put("/password", response_model=PortalTokenOut)
 def change_password(
     body: PortalPasswordIn,
@@ -179,6 +229,7 @@ def change_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密码不能和当前密码相同")
 
     current.password_hash = hash_password(body.new_password)
+    current.token_valid_after = datetime.now()  # 旧 token 全部失效（强制下线）
     current.must_change_password = 0  # 改密成功：清掉「默认密码」强提示
     log_action(db, current, "update", target_type="user", target_id=current.id, detail={"field": "password"}, ip=_ip(request))
     db.commit()

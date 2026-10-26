@@ -127,7 +127,7 @@ def main() -> int:
         db.add(app)
         db.commit()
         cand_user = db.scalar(select(User).where(User.candidate_id == cand.id))
-        ids = dict(hrA=hr_a.id, hrB=hr_b.id, cand=cand.id, cand_user=cand_user.id, app=app.id)
+        ids = dict(hrA=hr_a.id, hrB=hr_b.id, cand=cand.id, cand_user=cand_user.id, app=app.id, pos=pos.id)
         db.close()
 
         TA = {"Authorization": f"Bearer {create_access_token(ids['hrA'], 'hr')}"}
@@ -204,9 +204,9 @@ def main() -> int:
         row = next(x for x in accounts if x["candidate_id"] == ids["cand"])
         check(row["close_reason"] == "eliminated" and row["restore_deadline"],
               "技术端标注已淘汰销号 + 恢复截止")
-        r = c.put(f"/api/tech/candidate-owners/stage-owners/{APP}", headers=TM,
+        r = c.put(f"/api/tech/candidate-owners/stage-owners/{ids['pos']}", headers=TM,
                   json={"owners": {}})
-        check(r.status_code == 200, "关卡负责人空提交通路")
+        check(r.status_code == 200, "关卡负责人（按岗位）空提交通路")
         r = c.put(f"/api/tech/accounts/{row['id']}/status", headers=TM, json={"is_active": True})
         check(r.status_code == 200, "保存期内恢复成功", r.text[:120])
         r = c.get("/api/portal/notices", headers=CH)
@@ -266,17 +266,18 @@ def main() -> int:
         r = client_put_stage_note(c, TA, APP, "test", "清空后甲仍认领 test")
         check(r["ok"], "清空归属不清阶段认领")
 
-        # 技术端指派 test 关给甲 → 乙 403
-        r = c.put(f"/api/tech/candidate-owners/stage-owners/{APP}", headers=TM,
-                  json={"owners": {"test": ids["hrA"], "ai": None, "resume": None,
-                                    "pro": None, "hr": None, "final": None}})
-        check(r.status_code == 200, "技术端指派 test 关给甲")
+        # 技术端按岗位指派 test 关给甲 → 岗位级优先于乙的投递级认领，乙 403
+        r = c.put(f"/api/tech/candidate-owners/stage-owners/{ids['pos']}", headers=TM,
+                  json={"owners": {"test": ids["hrA"]}})
+        check(r.status_code == 200, "技术端按岗位指派 test 关给甲")
         r = client_put_stage_note(c, TB, APP, "test", "乙被换掉")
-        check(not r["ok"] and r["status"] == 403, "指派后乙对 test 关 403")
-        r = c.put(f"/api/tech/candidate-owners/stage-owners/{APP}", headers=TM,
+        check(not r["ok"] and r["status"] == 403, "岗位指派后乙对 test 关 403（岗位级优先于认领）")
+        r = client_put_stage_note(c, TA, APP, "test", "甲按岗位指派可编辑")
+        check(r["ok"], "被指派的甲对 test 关可编辑")
+        r = c.put(f"/api/tech/candidate-owners/stage-owners/{ids['pos']}", headers=TM,
                   json={"owners": {"test": 99999999}})
         check(r.status_code == 400, "非法 HR → 400")
-        r = c.put(f"/api/tech/candidate-owners/stage-owners/{APP}", headers=TM,
+        r = c.put(f"/api/tech/candidate-owners/stage-owners/{ids['pos']}", headers=TM,
                   json={"owners": {"bad": ids["hrB"]}})
         check(r.status_code == 400, "非法关卡 → 400")
 

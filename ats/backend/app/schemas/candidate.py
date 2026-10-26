@@ -14,6 +14,7 @@ class CandidateIn(BaseModel):
         description="手机号。填了会自动开通候选人端账号（默认密码 admin）；不填则候选人无法登录",
     )
     email: str | None = Field(default=None, max_length=100, description="邮箱，可不填")
+    birth: str | None = Field(default=None, max_length=20, description="出生年月，如 1999-06，可不填")
     remark: str | None = Field(default=None, max_length=500, description="备注，可不填。例：内推 / 猎头推荐 / 校招")
 
     model_config = {
@@ -34,6 +35,7 @@ class CandidateUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255, description="新的姓名，不传=不改")
     phone: str | None = Field(default=None, max_length=20, description="新手机号；传空字符串=清空手机号")
     email: str | None = Field(default=None, max_length=100, description="新邮箱；传空字符串=清空")
+    birth: str | None = Field(default=None, max_length=20, description="出生年月，如 1999-06；传空字符串=清空")
     remark: str | None = Field(default=None, max_length=500, description="新的备注。传空字符串可以清空备注")
     # HR 从简历摘录的个人信息（与表单答卷独立）
     onboard_date: str | None = Field(default=None, max_length=50, description="到岗时间，可写「随时」等")
@@ -48,6 +50,11 @@ class CandidateUpdate(BaseModel):
         default=False,
         description="重名确认：改成与已有候选人相同的姓名时，第一次会返回 409；确认无误后带 true 再提交一次即可",
     )
+    # ---- 乐观锁（v3.17 P1-5）----
+    expected_update_time: datetime | None = Field(
+        default=None, alias="expectedUpdateTime", description="前端读到的候选人更新时间；不匹配且未带 force 时返回 409"
+    )
+    force: bool = Field(default=False, description="冲突确认后强制覆盖")
 
     model_config = {
         "json_schema_extra": {
@@ -69,6 +76,7 @@ class CandidateOut(BaseModel):
     owner_name: str | None = Field(default=None, description="负责人姓名（实名优先）")
     phone: str | None = Field(default=None, description="手机号（候选人端登录账号）")
     email: str | None = Field(default=None, description="邮箱")
+    birth: str | None = Field(default=None, description="出生年月，如 1999-06")
     remark: str | None = Field(description="备注")
     onboard_date: str | None = Field(default=None, description="到岗时间")
     school: str | None = Field(default=None, description="毕业院校")
@@ -79,5 +87,6 @@ class CandidateOut(BaseModel):
     hire_type: str | None = Field(default=None, description="招聘类型")
     work_experience: str | None = Field(default=None, description="工作经历")
     create_time: datetime | None = Field(description="录入时间")
+    update_time: datetime | None = Field(default=None, description="最近更新时间（乐观锁基准：编辑时原样带回 expectedUpdateTime）")
     application_count: int = Field(default=0, description="名下投递数（删除前会连带删除这些）")
     has_account: bool = Field(default=False, description="是否已开通候选人端账号（有手机号即开通）")

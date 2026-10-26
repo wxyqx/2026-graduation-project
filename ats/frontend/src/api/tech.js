@@ -16,6 +16,7 @@ export const techAuthApi = {
 
 export const techOverviewApi = {
   get: () => techHttp.get('/overview'),
+  storage: () => techHttp.get('/storage'),
 }
 
 export const techAccountApi = {
@@ -23,6 +24,8 @@ export const techAccountApi = {
   create: (data) => techHttp.post('/accounts', data),
   setStatus: (id, isActive) => techHttp.put(`/accounts/${id}/status`, { is_active: isActive }),
   resetPassword: (id) => techHttp.put(`/accounts/${id}/reset-password`),
+  // 彻底删除候选人（PIPL 删除权工具；物理删除，先有备份再用）
+  purgeCandidate: (candidateId) => techHttp.delete(`/candidate-owners/candidates/${candidateId}/purge?confirm=true`),
 }
 
 export const techStageOwnerApi = {
@@ -51,6 +54,12 @@ export const techConfigApi = {
   disable: (id) => techHttp.put(`/ai-configs/${id}/disable`),
   getPrompt: () => techHttp.get('/ai-prompt'),
   savePrompt: (rules) => techHttp.put('/ai-prompt', { rules }),
+  // 隐私政策与 AI 筛选告知（候选人端投递/填表/回传前的同意依据）
+  getPrivacy: () => techHttp.get('/privacy-policy'),
+  savePrivacy: (text) => techHttp.put('/privacy-policy', { text }),
+  // 淘汰申诉联系方式（通知模板 {申诉联系方式} 占位符）
+  getAppeal: () => techHttp.get('/appeal-contact'),
+  saveAppeal: (text) => techHttp.put('/appeal-contact', { text }),
 }
 
 export const techLogApi = {

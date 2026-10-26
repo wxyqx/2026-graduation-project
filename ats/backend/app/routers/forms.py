@@ -159,6 +159,9 @@ def list_candidate_forms(can_id: CanId, db: Session = Depends(get_db), user: Use
     """某候选人的全部答卷（个人资料表 + 各投递的岗位表）
 
 **返回什么**：数组，每条带模板名、状态、答案（field_key → 值）和带中文标签的 items。
+
+**权限**：答卷（个人资料表 / 面试登记表 / 职业底色图）对全部 HR 可见；私密附件的
+限制只针对文件接口（见 candidate_files）。
 """
     if db.get(Candidate, can_id) is None:
         raise HTTPException(status_code=404, detail="候选人不存在")
@@ -168,7 +171,7 @@ def list_candidate_forms(can_id: CanId, db: Session = Depends(get_db), user: Use
 
 @router.get("/applications/{app_id}/forms")
 def list_application_forms(app_id: AppId, db: Session = Depends(get_db), user: User = Depends(get_current_hr)):
-    """某次投递的岗位答卷"""
+    """某次投递的岗位答卷（对全部 HR 可见）"""
     if db.get(Application, app_id) is None:
         raise HTTPException(status_code=404, detail="投递记录不存在")
     subs = form_service.list_submissions(db, application_id=app_id)

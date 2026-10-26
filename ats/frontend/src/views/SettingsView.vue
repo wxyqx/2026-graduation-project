@@ -26,6 +26,8 @@ const NOTICE_PLACEHOLDERS = [
   { label: '应聘岗位', value: '{岗位}', hint: '自动替换为投递的岗位名' },
   { label: '所在关卡', value: '{关卡}', hint: '自动替换为通过/被淘汰的关卡名' },
   { label: '环节负责人', value: '{负责人}', hint: '通过=下一关负责人（接下来由谁负责），淘汰=本关负责人（评估人）；未指派时为候选人负责人' },
+  { label: '出结果时间', value: '{时间}', hint: '自动替换为本关通过/淘汰的时间（如 2026年10月26日）' },
+  { label: '申诉联系方式', value: '{申诉联系方式}', hint: '自动替换为技术管理端配置的申诉联系方式（淘汰通知建议加上）' },
 ]
 
 // 声明时就初始化四关，避免接口返回前模板读到 undefined 报错
@@ -49,6 +51,12 @@ function renderSample(text, st) {
     岗位: '示例岗位',
     关卡: st === 'eliminated' ? '专业面' : stageLabel[st],
     负责人: st === 'eliminated' ? '李评估' : '王面试官',
+    // 与后端 {时间} 占位符同格式：2026年10月26日
+    时间: (() => {
+      const d = new Date()
+      const p = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}年${p(d.getMonth() + 1)}月${p(d.getDate())}日`
+    })(),
   }
   for (const [k, v] of Object.entries(values)) text = (text || '').replaceAll(`{${k}}`, v)
   return text
@@ -154,7 +162,7 @@ onMounted(() => {
         候选人通过笔试 / 专业面 / HR 面 / 终面时，按这里的模板给他发一条通知，候选人下次登录会弹窗展示；
         被淘汰时按「淘汰」模板立即发送（候选人两天保留期内登录可见，超期登录通道关闭，拦截信息也用此模板）；
         关掉开关则不发。正文里点「候选人姓名 / 应聘岗位 / 所在关卡」按钮即可插入占位符，
-        发送时自动替换成每位候选人的真实信息（<code>{候选人}</code> <code>{岗位}</code> <code>{关卡}</code> <code>{负责人}</code>——通过=下一关负责人、淘汰=本关负责人）。
+        发送时自动替换成每位候选人的真实信息（<code>{候选人}</code> <code>{岗位}</code> <code>{关卡}</code> <code>{负责人}</code> <code>{时间}</code>——通过=下一关负责人、淘汰=本关负责人、时间=本关出结果的时间）。
       </p>
       <el-tabs v-model="noticeTab" class="notice-tabs">
         <el-tab-pane v-for="st in NOTICE_STAGES" :key="st" :name="st">
@@ -213,7 +221,7 @@ onMounted(() => {
       destroy-on-close
     >
       <p class="muted" style="margin-top: 0">
-        占位符已用示例值渲染：{候选人}=张三，{岗位}=示例岗位，{关卡}={{ previewStage === 'eliminated' ? '专业面' : stageLabel[previewStage] }}，{负责人}={{ previewStage === 'eliminated' ? '李评估（本关负责人）' : '王面试官（下一关负责人）' }}。
+        占位符已用示例值渲染：{候选人}=张三，{岗位}=示例岗位，{关卡}={{ previewStage === 'eliminated' ? '专业面' : stageLabel[previewStage] }}，{负责人}={{ previewStage === 'eliminated' ? '李评估（本关负责人）' : '王面试官（下一关负责人）' }}，{时间}=本关出结果的时间。
       </p>
       <div class="candidate-notice-mock">
         <div class="mock-item mock-unread">
@@ -239,11 +247,18 @@ onMounted(() => {
 .title {
   margin: 0 0 var(--ats-sp-2);
   font-size: var(--ats-fs-card);
-  font-weight: var(--ats-fw-medium);
+  font-weight: var(--ats-fw-bold);
 }
 p.muted {
   margin-top: 0;
   line-height: 1.7;
+}
+/* 说明文字里的占位符代码：浅底小方块，从灰说明里凸显出来 */
+p code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--el-fill-color);
+  font-size: var(--ats-fs-note);
 }
 .stage-row {
   display: flex;
@@ -253,7 +268,8 @@ p.muted {
 }
 .stage-label {
   width: 90px;
-  color: var(--el-text-color-regular);
+  font-weight: var(--ats-fw-bold);
+  color: var(--el-text-color-primary);
 }
 .tech-link {
   display: inline-flex;
@@ -290,7 +306,8 @@ p.muted {
   gap: var(--ats-sp-3);
 }
 .notice-stage-name {
-  font-weight: var(--ats-fw-medium);
+  font-size: var(--ats-fs-body);
+  font-weight: var(--ats-fw-bold);
   color: var(--el-text-color-primary);
 }
 

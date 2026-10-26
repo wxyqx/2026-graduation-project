@@ -42,20 +42,35 @@ def _hr_display(u) -> str | None:
 
 
 def _stage_owners(db, app: Application) -> dict[str, dict]:
-    """这投递各关的负责人：{stage: {user_id, name}}，没有负责人的关不在结果里。"""
+    """这投递各关的负责人：{stage: {user_id, name}}，没有负责人的关不在结果里。
+
+    岗位级指派优先（对该岗位全部候选人生效）；没指派的关落到投递级认领记录。
+    """
     from sqlalchemy import select
 
     from app.models import StageOwner, User
+    from app.services import ownership
 
+    merged: dict[str, dict] = {}
+    for stage, uid in ownership.position_owner_ids(db, app.pos_id).items():
+        merged[stage] = {"user_id": uid, "name": _user_name(db, uid)}
     rows = db.execute(
-        select(StageOwner.stage, User.id, User.real_name, User.username)
+        select(StageOwner.stage, StageOwner.user_id, User.real_name, User.username)
         .join(User, StageOwner.user_id == User.id, isouter=True)
         .where(StageOwner.application_id == app.id)
     ).all()
-    return {
-        stage: {"user_id": uid, "name": (real or username) if uid else None}
-        for stage, uid, real, username in rows
-    }
+    for stage, uid, real, username in rows:
+        if stage in merged:
+            continue  # 岗位级已指派，投递级认领记录不覆盖
+        merged[stage] = {"user_id": uid, "name": (real or username) if uid else None}
+    return merged
+
+
+def _user_name(db, user_id: int) -> str | None:
+    from app.models import User
+
+    u = db.get(User, user_id)
+    return (u.real_name or u.username) if u else None
 
 
 def application_detail(app: Application, db=None) -> dict:
